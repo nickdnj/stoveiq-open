@@ -1,8 +1,14 @@
 # StoveIQ -- Open Source Smart Cooking Monitor
 
+[![CI](https://github.com/nickdnj/stoveiq-open/actions/workflows/ci.yml/badge.svg)](https://github.com/nickdnj/stoveiq-open/actions)
+[![License: MIT](https://img.shields.io/badge/Software-MIT-blue.svg)](LICENSE-SOFTWARE)
+[![License: CERN-OHL-S-2.0](https://img.shields.io/badge/Hardware-CERN--OHL--S--2.0-orange.svg)](LICENSE-HARDWARE)
+
 An ESP32-S3 + MLX90640 thermal camera that turns any stove into a smart cooktop. Real-time heatmap, per-burner temperature tracking, boil detection, smoke point warnings, and cook session logging -- all running locally with zero cloud dependency.
 
 **No cloud. No subscriptions. No app to install. Just open your browser.**
+
+> **Follow the build:** [YouTube Build Series](https://youtube.com/@vistter) | [Hackaday.io Build Log](https://hackaday.io/) *(project page coming soon)* | [GitHub Source](https://github.com/nickdnj/stoveiq-open)
 
 ## Features
 
@@ -43,8 +49,8 @@ GPIO 2 (SCL) -----> SCL
 pip install platformio
 
 # Clone and build
-git clone https://github.com/nickdemarco/stoveiq.git
-cd stoveiq/firmware
+git clone https://github.com/nickdnj/stoveiq-open.git
+cd stoveiq-open/firmware
 pio run -t upload
 
 # Upload web UI (optional -- fallback UI is built into firmware)
@@ -122,6 +128,16 @@ stoveiq/
   docs/               # Build guide, BOM, wiring diagrams
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](docs/CONTRIBUTING.md) *(coming soon)* for development setup, testing, and code style guidelines.
+
+Contributions welcome -- especially:
+- Web UI improvements (the `firmware/data/` directory)
+- New cooking alert types
+- Enclosure variants for different mounting scenarios
+- Translations
+
 ## License
 
 - **Software:** [MIT](LICENSE-SOFTWARE)
@@ -129,9 +145,20 @@ stoveiq/
 
 ## Inspired By
 
-- [Combustion Inc](https://combustion.inc/) -- Smart cooking thermometer with predictive algorithms (internal meat temps via probe). StoveIQ provides the complementary view: surface thermal imaging of the entire cooktop.
+- [Combustion Inc](https://combustion.inc/) -- Smart cooking thermometer with predictive algorithms (internal meat temps via probe). StoveIQ provides the complementary view: surface thermal imaging of the entire cooktop from above.
 
-## Links
+---
 
-- [Hackaday.io Project Page](https://hackaday.io/) *(coming soon)*
-- [YouTube Build Series](https://youtube.com/@vistter) *(coming soon)*
+## Follow the Project
+
+| Platform | Link | What You'll Find |
+|----------|------|-----------------|
+| **GitHub** | [nickdnj/stoveiq-open](https://github.com/nickdnj/stoveiq-open) | Source code, hardware files, issues |
+| **YouTube** | [@vistter](https://youtube.com/@vistter) | Build videos, cooking demos, deep dives |
+| **Hackaday.io** | *(coming soon)* | Build log, community discussion |
+
+**Planned video series:**
+1. "I Built an Open Source Smart Cooking Monitor" -- launch overview + demo
+2. "Real-Time Thermal Imaging with ESP32" -- WebSocket streaming deep dive
+3. "Can an IR Camera Detect When Water Boils?" -- cooking science + algorithm
+4. "3D Printing a Parametric Enclosure in OpenSCAD" -- design + print process
