@@ -1,0 +1,44 @@
+name: StoveIQ CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  firmware-tests:
+    name: Firmware Tests (Native Emulator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Run native tests
+        working-directory: firmware
+        run: pio test -e emulator
+
+  firmware-build:
+    name: Firmware Build (ESP32-S3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build ESP32-S3 firmware
+        working-directory: firmware
+        run: pio run -e esp32s3

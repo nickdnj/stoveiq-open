@@ -1,0 +1,27 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "sensor.c"
+        "cooking_engine.c"
+        "tasks.c"
+        "web_server.c"
+        "wifi_manager.c"
+        "ble_provision.c"
+    INCLUDE_DIRS
+        "."
+        "../include"
+        "../emulator"
+    REQUIRES
+        driver
+        esp_wifi
+        esp_event
+        esp_netif
+        esp_http_server
+        nvs_flash
+        spiffs
+        mdns
+        wifi_provisioning
+        bt
+        esp_timer
+        lwip
+)

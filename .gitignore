@@ -1,0 +1,24 @@
+# Build
+.pio/
+build/
+__pycache__/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials — NEVER commit these
+.env
+wifi_config.h
+sdkconfig
+sdkconfig.old
+
+# Generated
+firmware/data/*.gz
