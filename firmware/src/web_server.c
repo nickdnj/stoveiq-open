@@ -405,6 +405,7 @@ static const char FALLBACK_HTML[] =
 "        temps[i]=dv.getInt16(4+i*2,true)/10.0;\n"
 "        if(temps[i]<mn)mn=temps[i];if(temps[i]>mx)mx=temps[i];\n"
 "      }\n"
+"      temps.reverse();\n"
 "      const range=mx-mn||1;\n"
 "      for(let i=0;i<768;i++){\n"
 "        const c=cmap((temps[i]-mn)/range);\n"
