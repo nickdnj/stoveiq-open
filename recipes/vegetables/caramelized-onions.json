@@ -1,0 +1,36 @@
+{
+  "name": "Caramelized Onions",
+  "version": 1,
+  "author": "nickdnj",
+  "description": "Low and slow golden caramelized onions",
+  "category": "vegetables",
+  "stove_type": "any",
+  "cookware": "large skillet or dutch oven",
+  "difficulty": "beginner",
+  "total_time_min": 35,
+  "steps": [
+    {
+      "desc": "Set to low heat, add oil/butter",
+      "target_temp": 50,
+      "trigger": "target",
+      "coach_msg": "Warming..."
+    },
+    {
+      "desc": "Waiting for low heat...",
+      "target_temp": 130,
+      "trigger": "target",
+      "coach_msg": "Ready! Add onions."
+    },
+    {
+      "desc": "Added onions? Stir occasionally",
+      "trigger": "confirm",
+      "coach_msg": ""
+    },
+    {
+      "desc": "Low and slow... patience!",
+      "trigger": "timer_done",
+      "timer_sec": 1800,
+      "coach_msg": "Golden brown! Done."
+    }
+  ]
+}

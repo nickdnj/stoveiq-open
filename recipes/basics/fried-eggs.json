@@ -1,0 +1,42 @@
+{
+  "name": "Fried Eggs",
+  "version": 1,
+  "author": "nickdnj",
+  "description": "Perfect sunny-side-up with thermal pan monitoring",
+  "category": "basics",
+  "stove_type": "any",
+  "cookware": "non-stick or cast iron skillet",
+  "difficulty": "beginner",
+  "total_time_min": 8,
+  "steps": [
+    {
+      "desc": "Place pan, set to medium-low",
+      "target_temp": 50,
+      "trigger": "target",
+      "coach_msg": "Warming up..."
+    },
+    {
+      "desc": "Pan heating...",
+      "target_temp": 130,
+      "trigger": "target",
+      "coach_msg": "Almost ready..."
+    },
+    {
+      "desc": "Add butter or oil",
+      "trigger": "confirm",
+      "coach_msg": ""
+    },
+    {
+      "desc": "Butter melting... crack eggs when ready",
+      "target_temp": 150,
+      "trigger": "target",
+      "coach_msg": "Pan is perfect! Crack eggs."
+    },
+    {
+      "desc": "Cooking...",
+      "trigger": "timer_done",
+      "timer_sec": 180,
+      "coach_msg": "Eggs are done!"
+    }
+  ]
+}

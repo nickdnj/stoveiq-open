@@ -30,7 +30,22 @@ typedef struct {
     float             prev_temps[STOVEIQ_MAX_BURNERS];  /* For dT/dt   */
     uint32_t          prev_timestamp_ms;
     bool              initialized;
+
+    /* Calibration */
+    calibration_t     calibration;
+    bool              use_calibration;
+
+    /* Recipe */
+    recipe_session_t  recipe;
+
+    /* Simulation */
+    bool              sim_active;
+    float             sim_temp;
+    int8_t            sim_burner_id;
 } cooking_engine_t;
+
+/* Max recipes in library */
+#define RECIPE_LIBRARY_SIZE  8
 
 /* ------------------------------------------------------------------ */
 /*  API                                                                */
@@ -74,6 +89,57 @@ void cooking_engine_silence_all(cooking_engine_t *engine);
  */
 void cooking_engine_update_config(cooking_engine_t *engine,
                                   const stoveiq_config_t *config);
+
+/**
+ * Set burner calibration.  When set, uses fixed zones instead of CCL.
+ */
+void cooking_engine_set_calibration(cooking_engine_t *engine,
+                                    const calibration_t *cal);
+
+/**
+ * Get current calibration.
+ */
+const calibration_t *cooking_engine_get_calibration(
+    const cooking_engine_t *engine);
+
+/**
+ * Start a recipe session on a specific calibrated burner.
+ */
+void cooking_engine_start_recipe(cooking_engine_t *engine,
+                                 uint8_t recipe_idx, int8_t burner_id);
+
+/**
+ * Advance recipe to next step (manual trigger).
+ */
+void cooking_engine_recipe_next(cooking_engine_t *engine);
+
+/**
+ * Confirm a user-action step (TRIGGER_CONFIRM).
+ */
+void cooking_engine_recipe_confirm(cooking_engine_t *engine);
+
+/**
+ * Stop/cancel active recipe.
+ */
+void cooking_engine_recipe_stop(cooking_engine_t *engine);
+
+/**
+ * Get the recipe session state.
+ */
+const recipe_session_t *cooking_engine_get_recipe(
+    const cooking_engine_t *engine);
+
+/**
+ * Get the built-in recipe library.
+ */
+const recipe_t *cooking_engine_get_recipes(int *count);
+
+/**
+ * Set simulated temperature for a burner (for recipe testing).
+ * Set to -1 to disable simulation.
+ */
+void cooking_engine_set_sim_temp(cooking_engine_t *engine,
+                                 int8_t burner_id, float temp);
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,42 @@
+{
+  "name": "White Rice",
+  "version": 1,
+  "author": "nickdnj",
+  "description": "Perfect stovetop white rice every time",
+  "category": "basics",
+  "stove_type": "any",
+  "cookware": "medium pot with lid",
+  "difficulty": "beginner",
+  "total_time_min": 25,
+  "steps": [
+    {
+      "desc": "Fill pot with water, set to high",
+      "target_temp": 50,
+      "trigger": "target",
+      "coach_msg": "Water is heating up..."
+    },
+    {
+      "desc": "Waiting for rolling boil...",
+      "target_temp": 100,
+      "trigger": "boil",
+      "coach_msg": "Boiling! Add rice now."
+    },
+    {
+      "desc": "Added rice? Stir and reduce heat",
+      "trigger": "confirm",
+      "coach_msg": ""
+    },
+    {
+      "desc": "Simmering... do NOT lift the lid",
+      "trigger": "timer_done",
+      "timer_sec": 1080,
+      "coach_msg": "Timer done! Kill heat."
+    },
+    {
+      "desc": "Rest 5 min, then fluff",
+      "trigger": "timer_done",
+      "timer_sec": 300,
+      "coach_msg": "Rice is ready!"
+    }
+  ]
+}

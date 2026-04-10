@@ -1,0 +1,41 @@
+{
+  "name": "Pasta",
+  "version": 1,
+  "author": "nickdnj",
+  "description": "Al dente pasta with thermal boil detection",
+  "category": "basics",
+  "stove_type": "any",
+  "cookware": "large pot",
+  "difficulty": "beginner",
+  "total_time_min": 15,
+  "steps": [
+    {
+      "desc": "Fill pot with water, set to high",
+      "target_temp": 50,
+      "trigger": "target",
+      "coach_msg": "Heating up..."
+    },
+    {
+      "desc": "Waiting for rolling boil...",
+      "target_temp": 100,
+      "trigger": "boil",
+      "coach_msg": "Rolling boil!"
+    },
+    {
+      "desc": "Add pasta and stir",
+      "trigger": "confirm",
+      "coach_msg": ""
+    },
+    {
+      "desc": "Keep at boil. Stir occasionally.",
+      "trigger": "timer_done",
+      "timer_sec": 480,
+      "coach_msg": "Check — al dente?"
+    },
+    {
+      "desc": "Drain when ready",
+      "trigger": "manual",
+      "coach_msg": ""
+    }
+  ]
+}

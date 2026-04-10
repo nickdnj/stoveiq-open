@@ -127,6 +127,29 @@ static esp_err_t sensor_i2c_init(void)
 
     ESP_LOGI(TAG, "I2C bus 0 initialized: SDA=GPIO%d, SCL=GPIO%d, %dkHz",
              SENSOR_I2C_SDA, SENSOR_I2C_SCL, SENSOR_I2C_FREQ_HZ / 1000);
+
+    /* Scan I2C bus to help debug wiring issues */
+    ESP_LOGI(TAG, "Scanning I2C bus...");
+    int found = 0;
+    for (uint8_t addr = 0x03; addr < 0x78; addr++) {
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_stop(cmd);
+        esp_err_t ret = i2c_master_cmd_begin(SENSOR_I2C_PORT, cmd, pdMS_TO_TICKS(50));
+        i2c_cmd_link_delete(cmd);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "  Found device at 0x%02X", addr);
+            found++;
+        }
+    }
+    if (found == 0) {
+        ESP_LOGW(TAG, "  No I2C devices found! Check wiring: SDA=GPIO%d, SCL=GPIO%d",
+                 SENSOR_I2C_SDA, SENSOR_I2C_SCL);
+    } else {
+        ESP_LOGI(TAG, "  %d device(s) found on I2C bus", found);
+    }
+
     return ESP_OK;
 }
 

@@ -1,0 +1,487 @@
+#!/usr/bin/env freecad-python
+# StoveIQ PVC Pipe Enclosure — FreeCAD Parametric Macro
+# Run from FreeCAD Macro editor: Macro → Macros → Execute
+#
+# Generates all parts of the split-pipe enclosure:
+#   Part A: Sensor half (MLX90640) with camera window
+#   Part B: ESP32 half with USB-C exit notch
+#   Part C: Snap-ring retainer (x2) — keeps halves aligned
+#   Part D: End cap (x2) — optional, press-fit
+#   Part E: Cabinet mounting bracket
+#
+# All dimensions in mm. Nominal pipe is 1.5" Schedule 40 PVC.
+#
+# After running this macro, export each shape via:
+#   File → Export → STEP AP214
+# Or run the export block at the bottom (requires FreeCAD in CLI mode).
+#
+# Nick DeMarco — StoveIQ Open Source Hardware
+# License: CERN-OHL-P v2
+
+import FreeCAD as App
+import Part
+import math
+
+# ============================================================
+# PARAMETERS — all editable here
+# ============================================================
+
+# --- PVC Pipe (1.5" Schedule 40) ---
+PIPE_OD       = 48.26   # mm  outer diameter  (1.900 in = 48.26mm)
+PIPE_ID       = 40.89   # mm  inner diameter  (1.610 in = 40.89mm)
+PIPE_WALL     = (PIPE_OD - PIPE_ID) / 2  # 3.68mm
+PIPE_LENGTH   = 120.0   # mm  total length of the tube section
+
+# --- Halves: split along horizontal diameter ---
+# Each half is a D-shaped cross-section
+# The "sensor half" is the LOWER half (faces stove when installed)
+# The "ESP32 half" is the UPPER half (faces cabinet)
+
+# --- MLX90640 breakout board (Adafruit 4469) ---
+SENSOR_PCB_W  = 25.4    # mm  board width
+SENSOR_PCB_L  = 25.4    # mm  board length
+SENSOR_PCB_T  = 1.6     # mm  PCB thickness
+# TO-39 sensor window position on breakout, from board corner
+SENSOR_WIN_X  = 12.7    # mm  center from left edge
+SENSOR_WIN_Y  = 12.7    # mm  center from connector edge
+SENSOR_WIN_D  = 8.5     # mm  aperture diameter in board
+# MLX90640 FoV: 110° x 75° (BAB variant)
+# We cut a larger window to ensure full FoV is unobstructed
+CAMERA_WINDOW_D = 14.0  # mm  hole through pipe wall (larger than sensor aperture)
+# Position of camera window along pipe length (from sensor-end)
+CAMERA_WIN_POS = 30.0   # mm  from closed end / connector end of sensor half
+
+# --- ESP32-S3-DevKitC-1 ---
+ESP_PCB_W     = 25.5    # mm  width (fits in 1.5" ID = 40.89mm — plenty of room)
+ESP_PCB_L     = 68.58   # mm  length (2.7 inches)
+ESP_PCB_T     = 1.6     # mm  thickness
+# USB-C is on the short end (pin header end) of the devkit
+USBC_W        = 9.0     # mm  connector width
+USBC_H        = 3.3     # mm  connector height
+USBC_NOTCH_W  = 13.0    # mm  notch cut (wider for cable clearance + strain relief)
+USBC_NOTCH_H  = 8.0     # mm  notch height
+# USB-C exit is at one end of the ESP32 half
+USBC_END_OFFSET = 2.0   # mm  from end cap face
+
+# --- PCB standoffs (both halves) ---
+STANDOFF_H    = 3.0     # mm  keeps PCB off the pipe floor
+STANDOFF_D    = 4.5     # mm  standoff OD
+STANDOFF_HOLE = 2.2     # mm  M2 tap hole
+
+# --- Split line features ---
+# Alignment tabs on the flat face of each half — keeps halves from rotating
+TAB_W         = 4.0     # mm  tab width
+TAB_H         = 2.0     # mm  tab height (protrusion above split plane)
+TAB_TOLERANCE = 0.25    # mm  clearance (socket is TAB_H + tolerance deeper)
+# Tab positions along pipe length
+TAB_POSITIONS = [20.0, PIPE_LENGTH - 20.0]  # from one end
+
+# --- Snap ring groove ---
+# Simple O-ring groove cut into OD; holds a 1.5mm O-ring or zip tie
+RING_GROOVE_W  = 2.5    # mm
+RING_GROOVE_D  = 1.5    # mm  depth
+RING_POSITIONS = [15.0, PIPE_LENGTH - 15.0]  # from one end
+
+# --- End caps ---
+CAP_THICKNESS  = 4.0    # mm  wall thickness
+CAP_SPIGOT_L   = 10.0   # mm  spigot that presses into pipe ID
+CAP_TOLERANCE  = 0.4    # mm  press fit clearance (print 0.4 tight for PETG)
+
+# --- Mounting bracket ---
+BRACKET_PLATE_W = 60.0  # mm  plate width
+BRACKET_PLATE_L = 40.0  # mm  plate length (cabinet contact length)
+BRACKET_PLATE_T = 3.0   # mm  plate thickness
+BRACKET_WALL    = 3.5   # mm  cradle arm thickness
+BRACKET_CRADLE_H = 20.0 # mm  how far the arms wrap around pipe
+# Mounting hole pattern
+BRACKET_HOLE_D  = 4.5   # mm  for #8 or M4 screw
+BRACKET_HOLE_SP = 40.0  # mm  hole spacing
+
+# ============================================================
+# GEOMETRY HELPERS
+# ============================================================
+
+def half_shell(pipe_od, pipe_id, length, upper=True):
+    """
+    Returns a D-shaped half cylinder.
+    upper=True  → top half (ESP32 half, flat face down, curved face up)
+    upper=False → bottom half (sensor half, flat face up, curved face down)
+    """
+    # Full pipe cylinder
+    outer = Part.makeCylinder(pipe_od / 2, length,
+                              App.Vector(0, 0, 0),
+                              App.Vector(0, 0, 1))
+    inner = Part.makeCylinder(pipe_id / 2, length,
+                              App.Vector(0, 0, 0),
+                              App.Vector(0, 0, 1))
+    tube = outer.cut(inner)
+
+    # Cutting box: remove one half along XZ plane (Y=0 is split plane)
+    # Pipe axis is Z. Split is Y=0. X is across the pipe width.
+    cut_size = pipe_od + 10
+    if upper:
+        # Remove everything below Y=0 (keep positive Y side)
+        cut_box = Part.makeBox(cut_size * 2, cut_size, length + 2,
+                               App.Vector(-cut_size, -cut_size, -1))
+    else:
+        # Remove everything above Y=0 (keep negative Y side)
+        cut_box = Part.makeBox(cut_size * 2, cut_size, length + 2,
+                               App.Vector(-cut_size, 0, -1))
+
+    half = tube.cut(cut_box)
+
+    # Add the flat face plate (D-shaped solid face to close the half)
+    # The flat chord spans the full ID diameter at Y=0
+    chord = pipe_id  # flat face width
+    plate_solid = Part.makeBox(chord, PIPE_WALL, length,
+                               App.Vector(-chord / 2, 0 if upper else -PIPE_WALL, 0))
+    if upper:
+        shell = half.fuse(plate_solid)
+    else:
+        shell = half.fuse(plate_solid)
+
+    return shell
+
+
+def add_standoff(x, z, height, d_outer, d_hole):
+    """Single standoff column at (x, 0, z) base, oriented upward."""
+    post = Part.makeCylinder(d_outer / 2, height,
+                             App.Vector(x, 0, z))
+    hole = Part.makeCylinder(d_hole / 2, height + 1,
+                             App.Vector(x, 0, z - 0.5))
+    return post.cut(hole)
+
+
+def camera_window_cut(pos_z, diameter, pipe_od):
+    """
+    Cylindrical cut through the bottom of the pipe wall for the sensor window.
+    Cut is radial (Y direction) through the curved pipe wall.
+    pos_z: position along pipe axis
+    """
+    # The bottom of the pipe is at Y = -pipe_od/2
+    # Cut from outside inward (positive Y direction through pipe wall)
+    cyl = Part.makeCylinder(diameter / 2, pipe_od,
+                            App.Vector(0, -pipe_od / 2 - 1, pos_z),
+                            App.Vector(0, 1, 0))  # Y direction
+    return cyl
+
+
+def usbc_notch_cut(pos_z, notch_w, notch_h, pipe_id):
+    """
+    U-shaped notch cut from the end of the upper half for USB-C cable exit.
+    Cut into the flat face (Y=0 plane) of the upper half.
+    pos_z: along pipe axis (near the end)
+    """
+    # Notch centered on X axis, cut into the flat plate portion
+    notch = Part.makeBox(notch_w, PIPE_WALL + 2, notch_h,
+                         App.Vector(-notch_w / 2, -1, pos_z))
+    return notch
+
+
+def alignment_tab(pos_z, width, height, pipe_id):
+    """
+    Rectangular tab that protrudes from the flat face of the upper half.
+    Receiver slot in lower half is tolerance-enlarged.
+    """
+    tab = Part.makeBox(width, height, 3.0,
+                       App.Vector(-width / 2, 0, pos_z - 1.5))
+    return tab
+
+
+def alignment_slot(pos_z, width, depth, tolerance, pipe_id):
+    """
+    Slot cut into flat face of lower half to receive alignment tab.
+    """
+    slot = Part.makeBox(width + tolerance, depth + tolerance, 3.0 + tolerance,
+                        App.Vector(-(width + tolerance) / 2,
+                                   -(depth + tolerance), pos_z - 1.5))
+    return slot
+
+
+def snap_groove(pos_z, groove_w, groove_d, pipe_od):
+    """
+    Circumferential groove on OD for O-ring / zip-tie to secure halves.
+    Torus-like groove — approximated as a toroid intersection.
+    """
+    # Cut a ring groove by subtracting a torus section
+    # Simpler: cut a rectangular ring groove using cylinder difference
+    outer_ring = Part.makeCylinder(pipe_od / 2 + 1,
+                                   groove_w,
+                                   App.Vector(0, 0, pos_z - groove_w / 2))
+    inner_ring = Part.makeCylinder(pipe_od / 2 - groove_d,
+                                   groove_w,
+                                   App.Vector(0, 0, pos_z - groove_w / 2))
+    groove = outer_ring.cut(inner_ring)
+    return groove
+
+
+def end_cap(pipe_od, pipe_id, spigot_length, cap_thickness, tolerance):
+    """
+    Press-fit end cap: flat disc + spigot that fits inside pipe ID.
+    """
+    # Outer flange disc
+    flange = Part.makeCylinder(pipe_od / 2 + 1, cap_thickness,
+                               App.Vector(0, 0, 0))
+    # Spigot: sized to press into pipe ID
+    spigot_od = pipe_id - tolerance
+    spigot = Part.makeCylinder(spigot_od / 2, spigot_length,
+                               App.Vector(0, 0, cap_thickness))
+    cap = flange.fuse(spigot)
+    return cap
+
+
+def mounting_bracket(pipe_od, plate_w, plate_l, plate_t, wall_t, cradle_h,
+                      hole_d, hole_sp):
+    """
+    Under-cabinet mount: flat plate with two screw holes + a saddle cradle
+    that wraps around the pipe, allowing rotation before tightening.
+
+    The plate mounts flat to cabinet underside.
+    A U-shaped cradle extends down from the plate center, holding the pipe.
+    A M3 compression screw through one cradle arm clamps the pipe angle.
+    """
+    # Flat mounting plate
+    plate = Part.makeBox(plate_w, plate_l, plate_t,
+                         App.Vector(-plate_w / 2, -plate_l / 2, 0))
+
+    # Screw holes through plate (for #8 wood screws or M4)
+    for sx in [-hole_sp / 2, hole_sp / 2]:
+        screw_hole = Part.makeCylinder(hole_d / 2, plate_t + 2,
+                                       App.Vector(sx, 0, -1))
+        plate = plate.cut(screw_hole)
+
+    # Cradle: two arms that wrap down and around the pipe
+    # Arms are rectangular, bent at pipe radius
+    # Simplified as two rectangular walls + circular pipe seat
+
+    # Pipe seat (partial cylinder matching pipe OD with 0.5mm clearance)
+    pipe_clearance = 0.5
+    seat_od = pipe_od + pipe_clearance * 2
+    seat_arc_angle = 200  # degrees of wrap (more than 180 = constraining)
+
+    # Full cylinder as seat basis
+    seat_full = Part.makeCylinder(seat_od / 2 + wall_t,
+                                  plate_l * 0.8,
+                                  App.Vector(0, -plate_l * 0.4,
+                                             -(pipe_od / 2 + wall_t + plate_t)))
+    seat_bore = Part.makeCylinder(seat_od / 2,
+                                  plate_l * 0.8,
+                                  App.Vector(0, -plate_l * 0.4,
+                                             -(pipe_od / 2 + wall_t + plate_t)))
+    seat_shell = seat_full.cut(seat_bore)
+
+    # Cut away the top 160° to make an open cradle (pipe loads from bottom)
+    # Keep bottom 200° — cut a box above the horizontal split
+    cut_top = Part.makeBox(seat_od * 2 + wall_t * 4, seat_od + wall_t * 2,
+                           plate_l * 1.2,
+                           App.Vector(-(seat_od + wall_t * 2),
+                                      -plate_l * 0.5,
+                                      -(pipe_od / 2 + wall_t + plate_t)))
+    cradle = seat_shell.cut(cut_top)
+
+    # Two side connector walls from plate down to cradle
+    for sx in [-plate_l * 0.3, plate_l * 0.3]:
+        arm = Part.makeBox(wall_t, plate_l * 0.8,
+                           pipe_od / 2 + wall_t + plate_t,
+                           App.Vector(sx - wall_t / 2, -plate_l * 0.4,
+                                      -(pipe_od / 2 + wall_t + plate_t)))
+        plate = plate.fuse(arm)
+
+    # Clamping screw hole through one cradle side arm
+    # M3 through hole for tightening screw (6mm from pipe surface)
+    clamp_x = plate_l * 0.3 + wall_t / 2
+    clamp_z = -(pipe_od / 2 + plate_t + wall_t / 2)
+    clamp_hole = Part.makeCylinder(1.75, plate_l * 0.8,  # M3 tap (3.0mm thread)
+                                   App.Vector(-plate_l * 0.5, -plate_l * 0.4,
+                                              clamp_z),
+                                   App.Vector(0, 1, 0))
+
+    bracket = plate.fuse(cradle)
+    bracket = bracket.cut(clamp_hole)
+
+    return bracket
+
+
+# ============================================================
+# BUILD PARTS
+# ============================================================
+
+doc = App.newDocument("StoveIQ_PVC_Enclosure")
+
+# --- PART A: SENSOR HALF (lower, faces stove) ---
+print("Building Part A: Sensor Half...")
+
+sensor_half = half_shell(PIPE_OD, PIPE_ID, PIPE_LENGTH, upper=False)
+
+# Camera window cut (radial hole through curved wall, bottom of pipe)
+win_cut = camera_window_cut(CAMERA_WIN_POS, CAMERA_WINDOW_D, PIPE_OD)
+sensor_half = sensor_half.cut(win_cut)
+
+# Alignment slots to receive tabs from upper half
+for tab_pos in TAB_POSITIONS:
+    slot = alignment_slot(tab_pos, TAB_W, TAB_H, TAB_TOLERANCE, PIPE_ID)
+    sensor_half = sensor_half.cut(slot)
+
+# Standoffs inside sensor half for MLX90640 breakout
+# Board sits centered in the half, 5mm from camera window end
+sensor_board_z = CAMERA_WIN_POS - SENSOR_PCB_L - 5.0
+sb_x_left  = -SENSOR_PCB_W / 2 + 3.0
+sb_x_right =  SENSOR_PCB_W / 2 - 3.0
+# Y = 0 is the flat face; standoffs at pipe floor (negative Y)
+# Standoffs on the flat face at Y = -STANDOFF_H/2 effectively
+
+for (sx, sz) in [(sb_x_left,  sensor_board_z + 3),
+                 (sb_x_right, sensor_board_z + 3),
+                 (sb_x_left,  sensor_board_z + SENSOR_PCB_L - 3),
+                 (sb_x_right, sensor_board_z + SENSOR_PCB_L - 3)]:
+    # Standoffs are small bosses on the inner flat surface
+    boss = Part.makeCylinder(STANDOFF_D / 2, STANDOFF_H,
+                             App.Vector(sx, -PIPE_WALL - STANDOFF_H, sz),
+                             App.Vector(0, 1, 0))  # Y direction (into half)
+    hole = Part.makeCylinder(STANDOFF_HOLE / 2, STANDOFF_H + 1,
+                             App.Vector(sx, -PIPE_WALL - STANDOFF_H - 0.5, sz),
+                             App.Vector(0, 1, 0))
+    boss = boss.cut(hole)
+    sensor_half = sensor_half.fuse(boss)
+
+# Snap ring grooves on OD
+for ring_pos in RING_POSITIONS:
+    groove = snap_groove(ring_pos, RING_GROOVE_W, RING_GROOVE_D, PIPE_OD)
+    sensor_half = sensor_half.cut(groove)
+
+obj_a = doc.addObject("Part::Feature", "SensorHalf")
+obj_a.Shape = sensor_half
+obj_a.ViewObject.ShapeColor = (0.9, 0.9, 0.9)  # light gray PVC
+
+
+# --- PART B: ESP32 HALF (upper, faces cabinet) ---
+print("Building Part B: ESP32 Half...")
+
+esp_half = half_shell(PIPE_OD, PIPE_ID, PIPE_LENGTH, upper=True)
+
+# USB-C notch at the cable-exit end (one end of upper half)
+# Cut through the end + flat face
+usbc_cut = Part.makeBox(USBC_NOTCH_W, PIPE_WALL + 5, USBC_NOTCH_H,
+                        App.Vector(-USBC_NOTCH_W / 2, -2, 0))
+esp_half = esp_half.cut(usbc_cut)
+
+# Also cut a relief notch in the pipe wall itself at that end
+wall_relief = Part.makeCylinder(USBC_NOTCH_W / 2, PIPE_WALL + 2,
+                                App.Vector(-USBC_NOTCH_W / 2,
+                                           PIPE_WALL / 2,
+                                           USBC_NOTCH_H / 2 + 1),
+                                App.Vector(1, 0, 0))
+esp_half = esp_half.cut(wall_relief)
+
+# Alignment tabs on flat face
+for tab_pos in TAB_POSITIONS:
+    tab = alignment_tab(tab_pos, TAB_W, TAB_H, PIPE_ID)
+    esp_half = esp_half.fuse(tab)
+
+# PCB retention clips / standoffs inside upper half
+# ESP32 board is 68.58 x 25.5mm, sits centered lengthwise, offset from USB end
+esp_board_z_start = USBC_END_OFFSET + 5.0
+esp_board_z_end   = esp_board_z_start + ESP_PCB_L
+
+for (sx, sz) in [(-(ESP_PCB_W / 2 - 3), esp_board_z_start + 3),
+                 ( (ESP_PCB_W / 2 - 3), esp_board_z_start + 3),
+                 (-(ESP_PCB_W / 2 - 3), esp_board_z_end - 3),
+                 ( (ESP_PCB_W / 2 - 3), esp_board_z_end - 3)]:
+    boss = Part.makeCylinder(STANDOFF_D / 2, STANDOFF_H,
+                             App.Vector(sx, PIPE_WALL, sz),
+                             App.Vector(0, 1, 0))
+    hole = Part.makeCylinder(STANDOFF_HOLE / 2, STANDOFF_H + 1,
+                             App.Vector(sx, PIPE_WALL - 0.5, sz),
+                             App.Vector(0, 1, 0))
+    boss = boss.cut(hole)
+    esp_half = esp_half.fuse(boss)
+
+# Snap ring grooves (same positions as sensor half — they align when assembled)
+for ring_pos in RING_POSITIONS:
+    groove = snap_groove(ring_pos, RING_GROOVE_W, RING_GROOVE_D, PIPE_OD)
+    esp_half = esp_half.cut(groove)
+
+obj_b = doc.addObject("Part::Feature", "ESP32Half")
+obj_b.Shape = esp_half
+obj_b.ViewObject.ShapeColor = (0.9, 0.9, 0.9)
+obj_b.ViewObject.Visibility = False  # hide in default view; show sensor half
+
+
+# --- PART C: END CAP ---
+print("Building Part C: End Caps...")
+
+cap = end_cap(PIPE_OD, PIPE_ID, CAP_SPIGOT_L, CAP_THICKNESS, CAP_TOLERANCE)
+
+# Vent hole in end cap (small, for cable routing / pressure equalization)
+vent = Part.makeCylinder(3.0, CAP_THICKNESS + CAP_SPIGOT_L + 2,
+                         App.Vector(0, 0, -1))
+cap_vented = cap.cut(vent)
+
+obj_c = doc.addObject("Part::Feature", "EndCap")
+obj_c.Shape = cap_vented
+obj_c.ViewObject.ShapeColor = (0.85, 0.85, 0.85)
+obj_c.ViewObject.Visibility = False
+
+
+# --- PART D: MOUNTING BRACKET ---
+print("Building Part D: Mounting Bracket...")
+
+bracket = mounting_bracket(PIPE_OD, BRACKET_PLATE_W, BRACKET_PLATE_L,
+                           BRACKET_PLATE_T, BRACKET_WALL, BRACKET_CRADLE_H,
+                           BRACKET_HOLE_D, BRACKET_HOLE_SP)
+
+obj_d = doc.addObject("Part::Feature", "MountingBracket")
+obj_d.Shape = bracket
+obj_d.ViewObject.ShapeColor = (0.2, 0.3, 0.8)  # blue for distinction
+obj_d.ViewObject.Visibility = False
+
+
+# ============================================================
+# ASSEMBLY POSITIONING (show sensor half + bracket together)
+# ============================================================
+
+# Position sensor half below bracket pipe seat
+# In assembly: pipe axis is X (horizontal, along cabinet edge)
+# Bracket is at Z=0 (cabinet surface), pipe hangs down
+
+print("Positioning assembly...")
+# Note: rotate 90° around Y to make pipe horizontal for assembly view
+# This is a visualization aid — export individual parts for manufacturing
+
+doc.recompute()
+
+# ============================================================
+# EXPORT STEP FILES
+# ============================================================
+
+import os
+OUTPUT_DIR = os.path.expanduser(
+    "~/Workspaces/stoveiq-open/hardware/enclosure/")
+
+parts_to_export = [
+    (obj_a, "stoveiq_pvc_sensor_half.step"),
+    (obj_b, "stoveiq_pvc_esp32_half.step"),
+    (obj_c, "stoveiq_pvc_end_cap.step"),
+    (obj_d, "stoveiq_pvc_bracket.step"),
+]
+
+for obj, filename in parts_to_export:
+    out_path = os.path.join(OUTPUT_DIR, filename)
+    obj.ViewObject.Visibility = True
+    Part.export([obj], out_path)
+    obj.ViewObject.Visibility = False
+    print(f"  Exported: {out_path}")
+
+obj_a.ViewObject.Visibility = True  # restore sensor half visible
+print("")
+print("=== StoveIQ PVC Enclosure Build Complete ===")
+print(f"Parts saved to: {OUTPUT_DIR}")
+print("")
+print("Key dimensions (1.5\" Schedule 40 PVC):")
+print(f"  Pipe OD:     {PIPE_OD:.2f}mm ({PIPE_OD/25.4:.3f}\")")
+print(f"  Pipe ID:     {PIPE_ID:.2f}mm ({PIPE_ID/25.4:.3f}\")")
+print(f"  Wall:        {PIPE_WALL:.2f}mm")
+print(f"  Length:      {PIPE_LENGTH:.1f}mm")
+print(f"  ESP32 fit:   {PIPE_ID - ESP_PCB_W:.1f}mm clearance total")
+print(f"  Camera window: {CAMERA_WINDOW_D:.1f}mm dia at Z={CAMERA_WIN_POS:.1f}mm")
+print(f"  USB-C notch: {USBC_NOTCH_W:.1f} x {USBC_NOTCH_H:.1f}mm at Z=0 end")

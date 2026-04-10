@@ -36,7 +36,8 @@ void web_server_broadcast_frame(const thermal_snapshot_t *snapshot);
  */
 void web_server_broadcast_status(const thermal_snapshot_t *snapshot,
                                  const cook_alert_t *alerts,
-                                 int alert_count);
+                                 int alert_count,
+                                 const recipe_session_t *recipe);
 
 /**
  * Check for pending WebSocket commands from clients.

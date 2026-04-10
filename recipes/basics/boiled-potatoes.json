@@ -1,0 +1,41 @@
+{
+  "name": "Boiled Potatoes",
+  "version": 1,
+  "author": "nickdnj",
+  "description": "For potato salad or mashed potatoes",
+  "category": "basics",
+  "stove_type": "any",
+  "cookware": "large pot",
+  "difficulty": "beginner",
+  "total_time_min": 25,
+  "steps": [
+    {
+      "desc": "Add potatoes + water, set high",
+      "target_temp": 50,
+      "trigger": "target",
+      "coach_msg": "Heating up..."
+    },
+    {
+      "desc": "Waiting for boil...",
+      "target_temp": 100,
+      "trigger": "boil",
+      "coach_msg": "Boiling! Reduce heat."
+    },
+    {
+      "desc": "Reduce heat to medium",
+      "trigger": "confirm",
+      "coach_msg": ""
+    },
+    {
+      "desc": "Simmering... wait for fork-tender",
+      "trigger": "timer_done",
+      "timer_sec": 900,
+      "coach_msg": "Check with a fork!"
+    },
+    {
+      "desc": "Drain and cool",
+      "trigger": "manual",
+      "coach_msg": ""
+    }
+  ]
+}

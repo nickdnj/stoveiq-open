@@ -44,6 +44,70 @@ typedef int esp_err_t;
 #define STOVEIQ_MAX_BURNERS   4
 
 /* ------------------------------------------------------------------ */
+/*  Burner calibration (user-defined zones)                            */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    bool     enabled;          /* Is this burner defined?              */
+    char     name[16];         /* User label: "Front Left" etc.        */
+    uint8_t  center_row;       /* Center in thermal image (0-23)       */
+    uint8_t  center_col;       /* Center in thermal image (0-31)       */
+    uint8_t  radius;           /* Circle radius in pixels (2-10)       */
+} burner_cal_t;
+
+typedef struct {
+    uint32_t    magic;         /* 0x53495143 = "SIQC"                  */
+    uint8_t     count;         /* Number of calibrated burners (0-4)   */
+    burner_cal_t burners[STOVEIQ_MAX_BURNERS];
+} calibration_t;
+
+#define CALIBRATION_MAGIC  0x53495143
+
+/* ------------------------------------------------------------------ */
+/*  Recipe system                                                      */
+/* ------------------------------------------------------------------ */
+
+typedef enum {
+    TRIGGER_MANUAL       = 0,   /* User taps "Next"                   */
+    TRIGGER_BOIL         = 1,   /* Temp >= boil_temp_c and stable     */
+    TRIGGER_SIMMER       = 2,   /* Temp in simmer range (85-95C)      */
+    TRIGGER_TARGET       = 3,   /* Temp >= step target and stable     */
+    TRIGGER_FOOD_DROP    = 4,   /* Sudden temp drop (>15C in 2s)      */
+    TRIGGER_TIMER_DONE   = 5,   /* Step timer expired                 */
+    TRIGGER_TEMP_BELOW   = 6,   /* Temp drops below target            */
+    TRIGGER_CONFIRM      = 7,   /* User taps confirm button           */
+} recipe_trigger_t;
+
+#define RECIPE_MAX_STEPS     8
+#define RECIPE_NAME_LEN     32
+#define RECIPE_DESC_LEN     64
+
+typedef struct {
+    char              desc[RECIPE_DESC_LEN];  /* "Waiting for boil..." */
+    float             target_temp;             /* Target for this step  */
+    recipe_trigger_t  trigger;                 /* What advances to next */
+    uint16_t          timer_sec;               /* Timer for this step   */
+    char              coach_msg[RECIPE_DESC_LEN]; /* "Add pasta now!"  */
+} recipe_step_t;
+
+typedef struct {
+    char          name[RECIPE_NAME_LEN];       /* "White Rice"         */
+    uint8_t       step_count;
+    recipe_step_t steps[RECIPE_MAX_STEPS];
+} recipe_t;
+
+typedef struct {
+    bool          active;
+    uint8_t       recipe_idx;          /* Index into recipe library     */
+    uint8_t       current_step;
+    int8_t        burner_id;           /* Calibrated burner ID (0-3)   */
+    uint32_t      step_start_ms;       /* When current step began      */
+    uint32_t      timer_start_ms;      /* When step timer started      */
+    bool          timer_running;
+    float         prev_temp;           /* For food-drop detection      */
+} recipe_session_t;
+
+/* ------------------------------------------------------------------ */
 /*  Burner state                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -118,6 +182,12 @@ typedef enum {
     CMD_SET_WIFI        = 4,
     CMD_SET_SETTING     = 5,
     CMD_TEST_BUZZER     = 6,
+    CMD_SET_CALIBRATION = 7,
+    CMD_START_RECIPE    = 8,
+    CMD_RECIPE_NEXT     = 9,
+    CMD_RECIPE_STOP     = 10,
+    CMD_RECIPE_CONFIRM  = 11,
+    CMD_SIM_TEMP        = 12,
 } ws_command_type_t;
 
 typedef struct {

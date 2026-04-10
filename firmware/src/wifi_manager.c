@@ -24,9 +24,9 @@
 static const char *TAG = "wifi";
 
 #define WIFI_STA_CONNECTED_BIT  BIT0
-#define NVS_NAMESPACE           "stoveiq"
-#define NVS_KEY_SSID            "wifi_ssid"
-#define NVS_KEY_PASS            "wifi_pass"
+#define NVS_NAMESPACE           "wifi_creds"
+#define NVS_KEY_SSID            "ssid"
+#define NVS_KEY_PASS            "pass"
 
 static EventGroupHandle_t s_wifi_events;
 static char s_sta_ip[16] = "";
@@ -115,15 +115,22 @@ esp_err_t wifi_manager_init(const char *ap_ssid)
 {
     s_wifi_events = xEventGroupCreate();
 
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    /* netif/event loop/wifi may already be initialized by main.c (for BLE provisioning).
+     * Tolerate ESP_ERR_INVALID_STATE which means "already initialized". */
+    esp_err_t err;
+    err = esp_netif_init();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) ESP_ERROR_CHECK(err);
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) ESP_ERROR_CHECK(err);
 
     /* Create both AP and STA netifs */
     esp_netif_create_default_wifi_ap();
-    esp_netif_create_default_wifi_sta();
+    if (!esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"))
+        esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    err = esp_wifi_init(&cfg);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) ESP_ERROR_CHECK(err);
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));

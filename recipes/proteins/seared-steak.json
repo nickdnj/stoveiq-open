@@ -1,0 +1,54 @@
+{
+  "name": "Seared Steak",
+  "version": 1,
+  "author": "nickdnj",
+  "description": "Restaurant-quality sear with thermal precision",
+  "category": "proteins",
+  "stove_type": "any",
+  "cookware": "cast iron skillet",
+  "difficulty": "intermediate",
+  "total_time_min": 20,
+  "steps": [
+    {
+      "desc": "Place pan on burner, turn to high",
+      "target_temp": 50,
+      "trigger": "target",
+      "coach_msg": "Pan is warming..."
+    },
+    {
+      "desc": "Pan heating up...",
+      "target_temp": 180,
+      "trigger": "target",
+      "coach_msg": "Almost there..."
+    },
+    {
+      "desc": "Add oil now",
+      "trigger": "confirm",
+      "coach_msg": ""
+    },
+    {
+      "desc": "Oil heating...",
+      "target_temp": 230,
+      "trigger": "target",
+      "coach_msg": "PAN IS SCREAMING HOT!"
+    },
+    {
+      "desc": "Add steak!",
+      "trigger": "timer_done",
+      "timer_sec": 180,
+      "coach_msg": "FLIP NOW!"
+    },
+    {
+      "desc": "Searing side 2...",
+      "trigger": "timer_done",
+      "timer_sec": 150,
+      "coach_msg": "Pull it! Rest time."
+    },
+    {
+      "desc": "Rest 5 min (don't cut!)",
+      "trigger": "timer_done",
+      "timer_sec": 300,
+      "coach_msg": "Steak is ready!"
+    }
+  ]
+}

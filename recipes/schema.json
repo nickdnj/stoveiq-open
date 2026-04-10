@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StoveIQ Recipe",
+  "description": "A thermal cooking recipe for StoveIQ open-source cooking coach",
+  "type": "object",
+  "required": ["name", "version", "steps"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Recipe name displayed in the UI",
+      "maxLength": 32
+    },
+    "version": {
+      "type": "integer",
+      "description": "Schema version (currently 1)"
+    },
+    "author": {
+      "type": "string",
+      "description": "GitHub username of the contributor"
+    },
+    "description": {
+      "type": "string",
+      "description": "One-line description of the recipe"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["basics", "proteins", "vegetables", "sauces", "baking", "community"]
+    },
+    "stove_type": {
+      "type": "string",
+      "enum": ["any", "gas", "electric-coil", "glass-ceramic", "induction"],
+      "description": "Stove type this recipe was tuned for (default: any)"
+    },
+    "cookware": {
+      "type": "string",
+      "description": "Recommended cookware (e.g., 'cast iron skillet', 'stainless pot')"
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["beginner", "intermediate", "advanced"]
+    },
+    "total_time_min": {
+      "type": "integer",
+      "description": "Estimated total cook time in minutes"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["desc", "trigger"],
+        "properties": {
+          "desc": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Step description shown in the UI"
+          },
+          "target_temp": {
+            "type": "number",
+            "description": "Target temperature in Celsius for this step (0 = no target)"
+          },
+          "trigger": {
+            "type": "string",
+            "enum": ["manual", "boil", "simmer", "target", "food_drop", "timer_done", "temp_below", "confirm"],
+            "description": "What advances this step to the next"
+          },
+          "timer_sec": {
+            "type": "integer",
+            "description": "Timer duration in seconds (only used with timer_done trigger)"
+          },
+          "coach_msg": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Coaching message shown when step completes (with audio chime)"
+          }
+        }
+      }
+    }
+  }
+}

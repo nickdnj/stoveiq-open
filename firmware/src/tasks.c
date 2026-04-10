@@ -238,6 +238,7 @@ bool tasks_get_snapshot(thermal_snapshot_t *out)
 
 #include "web_server.h"
 #include "wifi_manager.h"
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -313,7 +314,9 @@ static void cooking_engine_task(void *arg)
                 int alert_count;
                 const cook_alert_t *alerts =
                     cooking_engine_get_alerts(&s_engine, &alert_count);
-                web_server_broadcast_status(&snap, alerts, alert_count);
+                const recipe_session_t *rs =
+                    cooking_engine_get_recipe(&s_engine);
+                web_server_broadcast_status(&snap, alerts, alert_count, rs);
                 last_status_ms = snap.timestamp_ms;
             }
 
@@ -324,11 +327,65 @@ static void cooking_engine_task(void *arg)
                 case CMD_SILENCE_ALERT:
                     cooking_engine_silence_all(&s_engine);
                     break;
-                case CMD_SET_WIFI: {
-                    /* Parse SSID/password from JSON payload */
-                    /* TODO: proper JSON parsing */
+                case CMD_SET_CALIBRATION: {
+                    /* Parse calibration from JSON payload */
+                    calibration_t cal = {0};
+                    cal.magic = CALIBRATION_MAGIC;
+                    /* Simple parser: "b":[ {r:row,c:col,rad:radius}, ...] */
+                    const char *p = cmd.payload;
+                    while (cal.count < STOVEIQ_MAX_BURNERS) {
+                        const char *rp = strstr(p, "\"r\":");
+                        if (!rp) break;
+                        burner_cal_t *bc = &cal.burners[cal.count];
+                        bc->enabled = true;
+                        bc->center_row = (uint8_t)atoi(rp + 4);
+                        const char *cp = strstr(rp, "\"c\":");
+                        if (cp) bc->center_col = (uint8_t)atoi(cp + 4);
+                        const char *radp = strstr(rp, "\"rad\":");
+                        if (radp) bc->radius = (uint8_t)atoi(radp + 6);
+                        cal.count++;
+                        p = rp + 1;
+                    }
+                    cooking_engine_set_calibration(&s_engine, &cal);
+                    ESP_LOGI(TAG, "Calibration set: %d burners", cal.count);
                     break;
                 }
+                case CMD_START_RECIPE: {
+                    /* Parse: {"recipe":idx,"burner":bid} */
+                    int ridx = 0, bid = 0;
+                    const char *rp = strstr(cmd.payload, "\"recipe\":");
+                    if (rp) ridx = atoi(rp + 9);
+                    const char *bp = strstr(cmd.payload, "\"burner\":");
+                    if (bp) bid = atoi(bp + 9);
+                    cooking_engine_start_recipe(&s_engine, ridx, bid);
+                    ESP_LOGI(TAG, "Recipe %d started on burner %d", ridx, bid);
+                    break;
+                }
+                case CMD_RECIPE_NEXT:
+                    cooking_engine_recipe_next(&s_engine);
+                    break;
+                case CMD_RECIPE_CONFIRM:
+                    cooking_engine_recipe_confirm(&s_engine);
+                    break;
+                case CMD_RECIPE_STOP:
+                    cooking_engine_recipe_stop(&s_engine);
+                    break;
+                case CMD_SIM_TEMP: {
+                    float t = -1;
+                    int bid = 0;
+                    const char *tp = strstr(cmd.payload, "\"temp\":");
+                    if (tp) t = (float)atof(tp + 7);
+                    const char *bp = strstr(cmd.payload, "\"burner\":");
+                    if (bp) bid = atoi(bp + 9);
+                    cooking_engine_set_sim_temp(&s_engine, bid, t);
+                    if (t >= 0)
+                        ESP_LOGI(TAG, "Sim: burner %d = %.1fC", bid, t);
+                    else
+                        ESP_LOGI(TAG, "Sim: disabled");
+                    break;
+                }
+                case CMD_SET_WIFI:
+                    break;
                 default:
                     break;
                 }

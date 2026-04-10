@@ -136,6 +136,9 @@ int main(void)
 #include "ble_provision.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
 
 static const char *TAG = "main";
 static ble_provision_ctx_t s_prov_ctx;
@@ -169,6 +172,13 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    /* Init networking stack — required before WiFi provisioning */
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+    wifi_init_config_t wifi_cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&wifi_cfg));
 
     /* Check for stored WiFi creds (from BLE provisioning or web UI) */
     wifi_creds_t stored_creds;
