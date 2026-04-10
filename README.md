@@ -1,6 +1,6 @@
 # StoveIQ -- Open Source Smart Cooking Monitor
 
-[![CI](https://github.com/nickdnj/stoveiq-open/actions/workflows/ci.yml/badge.svg)](https://github.com/nickdnj/stoveiq-open/actions)
+[![CI](https://github.com/nickdnj/stoveiq/actions/workflows/ci.yml/badge.svg)](https://github.com/nickdnj/stoveiq/actions)
 [![License: MIT](https://img.shields.io/badge/Software-MIT-blue.svg)](LICENSE-SOFTWARE)
 [![License: CERN-OHL-S-2.0](https://img.shields.io/badge/Hardware-CERN--OHL--S--2.0-orange.svg)](LICENSE-HARDWARE)
 
@@ -8,7 +8,7 @@ An ESP32-S3 + MLX90640 thermal camera that turns any stove into a smart cooktop.
 
 **No cloud. No subscriptions. No app to install. Just open your browser.**
 
-> **Follow the build:** [YouTube Build Series](https://youtube.com/@vistter) | [Hackaday.io Build Log](https://hackaday.io/) *(project page coming soon)* | [GitHub Source](https://github.com/nickdnj/stoveiq-open)
+> **Follow the build:** [YouTube Build Series](https://youtube.com/@vistter) | [Hackaday.io Build Log](https://hackaday.io/) *(project page coming soon)* | [GitHub Source](https://github.com/nickdnj/stoveiq)
 
 ## Features
 
@@ -49,7 +49,7 @@ GPIO 2 (SCL) -----> SCL
 pip install platformio
 
 # Clone and build
-git clone https://github.com/nickdnj/stoveiq-open.git
+git clone https://github.com/nickdnj/stoveiq.git
 cd stoveiq-open/firmware
 pio run -t upload
 
@@ -153,7 +153,7 @@ Contributions welcome -- especially:
 
 | Platform | Link | What You'll Find |
 |----------|------|-----------------|
-| **GitHub** | [nickdnj/stoveiq-open](https://github.com/nickdnj/stoveiq-open) | Source code, hardware files, issues |
+| **GitHub** | [nickdnj/stoveiq](https://github.com/nickdnj/stoveiq) | Source code, hardware files, issues |
 | **YouTube** | [@vistter](https://youtube.com/@vistter) | Build videos, cooking demos, deep dives |
 | **Hackaday.io** | *(coming soon)* | Build log, community discussion |
 
