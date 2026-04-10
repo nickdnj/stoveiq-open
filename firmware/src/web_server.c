@@ -98,7 +98,7 @@ static const char FALLBACK_HTML[] =
 /* Heatmap */
 ".hm-wrap{position:relative;width:100%;aspect-ratio:32/24;border-radius:8px;"
 "overflow:hidden;background:#222;margin-bottom:4px}\n"
-".hm-wrap canvas{width:100%;height:100%;image-rendering:pixelated}\n"
+".hm-wrap canvas{width:100%;height:100%}\n"
 "#overlay{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}\n"
 /* Info bar */
 ".info-bar{display:flex;justify-content:space-between;font-size:12px;color:#888;"
@@ -221,7 +221,7 @@ static const char FALLBACK_HTML[] =
 "  <div style='color:#888;font-size:12px;text-align:center;margin-bottom:12px'>"
 "Tap on each burner location. Drag to move. Pinch or buttons to resize.</div>\n"
 "  <div style='position:relative;width:100%;max-width:480px;margin:0 auto;aspect-ratio:32/24'>\n"
-"    <canvas id=calHm width=32 height=24 style='width:100%;height:100%;image-rendering:pixelated;"
+"    <canvas id=calHm width=256 height=192 style='width:100%;height:100%;"
 "border-radius:8px'></canvas>\n"
 "    <canvas id=calOv width=320 height=240 style='position:absolute;top:0;left:0;width:100%;"
 "height:100%;border-radius:8px'></canvas>\n"
@@ -248,7 +248,7 @@ static const char FALLBACK_HTML[] =
 "</div>\n"
 /* Heatmap */
 "<div class=hm-wrap>\n"
-"  <canvas id=hm width=32 height=24></canvas>\n"
+"  <canvas id=hm width=256 height=192></canvas>\n"
 "  <canvas id=overlay width=320 height=240></canvas>\n"
 "</div>\n"
 "<div class=info-bar>\n"
@@ -289,7 +289,11 @@ static const char FALLBACK_HTML[] =
 /* Canvas refs */
 "const cv=document.getElementById('hm'),cx=cv.getContext('2d');\n"
 "const ov=document.getElementById('overlay'),ox=ov.getContext('2d');\n"
+/* Offscreen 32x24 canvas for raw thermal data, then draw scaled up with smooth interpolation */
+"const offCv=document.createElement('canvas');offCv.width=32;offCv.height=24;\n"
+"const offCx=offCv.getContext('2d');\n"
 "const img=new ImageData(32,24);\n"
+"cx.imageSmoothingEnabled=true;cx.imageSmoothingQuality='high';\n"
 "let temps=new Float32Array(768);\n"
 /* Audio alert */
 "let audioCtx;\n"
@@ -412,7 +416,8 @@ static const char FALLBACK_HTML[] =
 "        img.data[i*4]=c[0];img.data[i*4+1]=c[1];"
 "img.data[i*4+2]=c[2];img.data[i*4+3]=255;\n"
 "      }\n"
-"      cx.putImageData(img,0,0);\n"
+"      offCx.putImageData(img,0,0);\n"
+"      cx.drawImage(offCv,0,0,256,192);\n"
 "      document.getElementById('mx').textContent=fmtT(mx);\n"
 "      document.getElementById('amb').textContent=fmtT(mn);\n"
 "      frameCount++;const now=Date.now();\n"
@@ -454,6 +459,9 @@ static const char FALLBACK_HTML[] =
 "let calBurners=[],calSelected=-1,calDragging=false;\n"
 "const calHm=document.getElementById('calHm');\n"
 "const calCx=calHm?calHm.getContext('2d'):null;\n"
+"if(calCx){calCx.imageSmoothingEnabled=true;calCx.imageSmoothingQuality='high'}\n"
+"const calOffCv=document.createElement('canvas');calOffCv.width=32;calOffCv.height=24;\n"
+"const calOffCx=calOffCv.getContext('2d');\n"
 "const calOv=document.getElementById('calOv');\n"
 "const calOx=calOv?calOv.getContext('2d'):null;\n"
 "const calImg=new ImageData(32,24);\n"
@@ -515,7 +523,8 @@ static const char FALLBACK_HTML[] =
 "      calImg.data[i*4]=c[0];calImg.data[i*4+1]=c[1];"
 "calImg.data[i*4+2]=c[2];calImg.data[i*4+3]=255;\n"
 "    }\n"
-"    calCx.putImageData(calImg,0,0);\n"
+"    calOffCx.putImageData(calImg,0,0);\n"
+"    calCx.drawImage(calOffCv,0,0,256,192);\n"
 "  }\n"
 "  /* Draw circles */\n"
 "  calOx.clearRect(0,0,320,240);\n"
