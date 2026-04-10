@@ -188,6 +188,8 @@ typedef enum {
     CMD_RECIPE_STOP     = 10,
     CMD_RECIPE_CONFIRM  = 11,
     CMD_SIM_TEMP        = 12,
+    CMD_SET_EMISSIVITY  = 13,
+    CMD_SET_TEMP_OFFSET = 14,
 } ws_command_type_t;
 
 typedef struct {
@@ -220,6 +222,10 @@ typedef struct {
     temp_unit_t temp_unit;             /* C or F display (default C)                     */
     uint8_t   colormap;                /* 0=Inferno, 1=Iron, 2=Hot, 3=Grayscale          */
 
+    /* Sensor calibration */
+    float     emissivity;              /* Surface emissivity 0.1-1.0 (default 0.95)      */
+    float     temp_offset_c;           /* Additive temp offset in C (default 0)          */
+
     /* Hardware */
     uint8_t   buzzer_gpio;             /* GPIO for buzzer (default 39)                   */
     bool      buzzer_enabled;          /* Enable buzzer alerts (default true)             */
@@ -239,6 +245,8 @@ typedef struct {
     .forgotten_timeout_sec  = 1800,    \
     .temp_unit              = TEMP_UNIT_CELSIUS, \
     .colormap               = 0,       \
+    .emissivity             = 0.95f,   \
+    .temp_offset_c          = 0.0f,    \
     .buzzer_gpio            = 39,      \
     .buzzer_enabled         = true,    \
     .auto_session           = false,   \

@@ -21,6 +21,8 @@
 static bool s_initialized = false;
 static emu_state_t s_emu_state;
 static float s_emu_time = 0.0f;
+static float s_emissivity = 0.95f;
+static float s_temp_offset = 0.0f;
 
 /* Default scenario: empty room at 22C, no burners */
 static const emu_scenario_t s_default_scenario = {
@@ -90,7 +92,6 @@ static const char *TAG = "sensor";
 
 /* Sensor configuration */
 #define SENSOR_REFRESH_RATE 0x03        /* 0x03 = 4Hz (matches FR-100 requirement) */
-#define SENSOR_EMISSIVITY   0.95f       /* Good for most cookware & stove surfaces */
 #define SENSOR_ADC_RES      0x03        /* 18-bit ADC resolution */
 
 /* Internal state */
@@ -98,6 +99,8 @@ static bool s_initialized = false;
 static paramsMLX90640 s_params;         /* Calibration parameters from EEPROM */
 static uint16_t s_raw_frame[834];       /* Raw frame data buffer (per Melexis spec) */
 static float s_tr = 23.0f;             /* Reflected temperature estimate (room temp) */
+static float s_emissivity = 0.95f;     /* Runtime-configurable emissivity */
+static float s_temp_offset = 0.0f;     /* Additive temp calibration offset (C) */
 
 /**
  * Initialize I2C master bus for MLX90640 communication.
@@ -204,7 +207,7 @@ sensor_err_t sensor_init(void)
     }
 
     s_initialized = true;
-    ESP_LOGI(TAG, "MLX90640 initialized: 4Hz refresh, 18-bit ADC, emissivity=%.2f", SENSOR_EMISSIVITY);
+    ESP_LOGI(TAG, "MLX90640 initialized: 4Hz refresh, 18-bit ADC, emissivity=%.2f", s_emissivity);
     return SENSOR_OK;
 }
 
@@ -230,7 +233,14 @@ static sensor_err_t sensor_read_raw(float frame[STOVEIQ_FRAME_PIXELS])
     s_tr = ta - 8.0f;  /* Reflected temp ~8°C below ambient (typical indoor) */
 
     /* Calculate object temperatures for all 768 pixels */
-    MLX90640_CalculateTo(s_raw_frame, &s_params, SENSOR_EMISSIVITY, s_tr, frame);
+    MLX90640_CalculateTo(s_raw_frame, &s_params, s_emissivity, s_tr, frame);
+
+    /* Apply temperature offset calibration */
+    if (s_temp_offset != 0.0f) {
+        for (int i = 0; i < STOVEIQ_FRAME_PIXELS; i++) {
+            frame[i] += s_temp_offset;
+        }
+    }
 
     return SENSOR_OK;
 }
@@ -340,4 +350,16 @@ float sensor_get_ambient(const float frame[STOVEIQ_FRAME_PIXELS])
     return sum / (float)count;
 
     #undef AMBIENT_COUNT
+}
+
+void sensor_set_emissivity(float emissivity)
+{
+    if (emissivity >= 0.1f && emissivity <= 1.0f) {
+        s_emissivity = emissivity;
+    }
+}
+
+void sensor_set_temp_offset(float offset_c)
+{
+    s_temp_offset = offset_c;
 }

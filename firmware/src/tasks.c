@@ -384,6 +384,24 @@ static void cooking_engine_task(void *arg)
                         ESP_LOGI(TAG, "Sim: disabled");
                     break;
                 }
+                case CMD_SET_EMISSIVITY: {
+                    const char *ep = strstr(cmd.payload, "\"value\":");
+                    if (ep) {
+                        float e = (float)atof(ep + 8);
+                        sensor_set_emissivity(e);
+                        ESP_LOGI(TAG, "Emissivity set to %.2f", e);
+                    }
+                    break;
+                }
+                case CMD_SET_TEMP_OFFSET: {
+                    const char *op = strstr(cmd.payload, "\"value\":");
+                    if (op) {
+                        float o = (float)atof(op + 8);
+                        sensor_set_temp_offset(o);
+                        ESP_LOGI(TAG, "Temp offset set to %.1fC", o);
+                    }
+                    break;
+                }
                 case CMD_SET_WIFI:
                     break;
                 default:

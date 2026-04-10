@@ -81,6 +81,21 @@ float sensor_get_ambient(const float frame[STOVEIQ_FRAME_PIXELS]);
  */
 bool sensor_is_initialized(void);
 
+/**
+ * Set emissivity for temperature calculation (0.1 to 1.0).
+ * Lower values = higher reported temps.  Default is 0.95.
+ * Common values: stainless steel 0.1-0.3, cast iron 0.6-0.7,
+ * ceramic/painted 0.9-0.95, water 0.96.
+ */
+void sensor_set_emissivity(float emissivity);
+
+/**
+ * Set additive temperature offset in Celsius.
+ * Applied after MLX90640 calculation.  Use to calibrate
+ * against a known reference thermometer.
+ */
+void sensor_set_temp_offset(float offset_c);
+
 /* ------------------------------------------------------------------ */
 /*  Emulator-only API                                                  */
 /* ------------------------------------------------------------------ */

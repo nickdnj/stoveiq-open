@@ -168,6 +168,26 @@ static const char FALLBACK_HTML[] =
 "  <label>Smoke Point<input type=number id=cfgSmoke value=230 step=1></label>\n"
 "  <label>Preheat Target<input type=number id=cfgPreheat value=200 step=1></label>\n"
 "  <label>Forgotten Timeout (min)<input type=number id=cfgForgot value=30 step=1></label>\n"
+"  <div style='margin-top:10px;padding-top:10px;border-top:1px solid #333'>\n"
+"    <div style='font-size:12px;color:#f59e0b;font-weight:700;margin-bottom:6px'>"
+"Sensor Calibration</div>\n"
+"    <label>Emissivity: <b id=emLabel>0.95</b>"
+"<input type=range id=cfgEmissivity min=10 max=100 value=95 step=1 "
+"style='width:100%' oninput=\"document.getElementById('emLabel').textContent="
+"(this.value/100).toFixed(2);sendCmd({cmd:'set_emissivity',value:this.value/100})\">"
+"</label>\n"
+"    <div style='display:flex;gap:4px;margin:4px 0 8px;flex-wrap:wrap'>\n"
+"      <button class=unit-btn onclick=\"setEm(0.95)\">Ceramic</button>\n"
+"      <button class=unit-btn onclick=\"setEm(0.85)\">Painted</button>\n"
+"      <button class=unit-btn onclick=\"setEm(0.70)\">Cast Iron</button>\n"
+"      <button class=unit-btn onclick=\"setEm(0.30)\">Steel</button>\n"
+"    </div>\n"
+"    <label>Temp Offset: <b id=offLabel>0</b>\\u00B0C"
+"<input type=range id=cfgOffset min=-20 max=20 value=0 step=1 "
+"style='width:100%' oninput=\"document.getElementById('offLabel').textContent="
+"this.value;sendCmd({cmd:'set_temp_offset',value:parseFloat(this.value)})\">"
+"</label>\n"
+"  </div>\n"
 "  <button style='width:100%;margin-top:12px;padding:10px;background:#f59e0b;border:none;"
 "border-radius:6px;color:#111;font-weight:700;font-size:14px;cursor:pointer' "
 "onclick=startCalibration()>Calibrate Burners</button>\n"
@@ -286,6 +306,10 @@ static const char FALLBACK_HTML[] =
 "  useFahrenheit=!useFahrenheit;"
 "document.getElementById('unitBtn').textContent=tu()}\n"
 "function toggleSettings(){document.getElementById('settingsPanel').classList.toggle('open')}\n"
+"function sendCmd(obj){if(ws&&ws.readyState===1)ws.send(JSON.stringify(obj))}\n"
+"function setEm(v){document.getElementById('cfgEmissivity').value=Math.round(v*100);"
+"document.getElementById('emLabel').textContent=v.toFixed(2);"
+"sendCmd({cmd:'set_emissivity',value:v})}\n"
 /* Canvas refs */
 "const cv=document.getElementById('hm'),cx=cv.getContext('2d');\n"
 "const ov=document.getElementById('overlay'),ox=ov.getContext('2d');\n"
@@ -939,6 +963,10 @@ static esp_err_t ws_handler(httpd_req_t *req)
                 cmd.type = CMD_RECIPE_STOP;
             else if (strstr((char *)buf, "\"sim_temp\""))
                 cmd.type = CMD_SIM_TEMP;
+            else if (strstr((char *)buf, "\"set_emissivity\""))
+                cmd.type = CMD_SET_EMISSIVITY;
+            else if (strstr((char *)buf, "\"set_temp_offset\""))
+                cmd.type = CMD_SET_TEMP_OFFSET;
             else if (strstr((char *)buf, "\"set_threshold\""))
                 cmd.type = CMD_SET_THRESHOLD;
             else if (strstr((char *)buf, "\"set_wifi\""))
