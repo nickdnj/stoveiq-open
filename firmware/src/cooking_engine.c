@@ -156,8 +156,8 @@ static int extract_zones(const ccl_state_t *s,
         }
     }
 
-    /* Filter and rank zones by total heat */
-    typedef struct { int label; float heat; } ranked_t;
+    /* Filter valid zones */
+    typedef struct { int label; int centroid_row; int centroid_col; } ranked_t;
     ranked_t ranked[CCL_MAX_LABELS];
     int n_ranked = 0;
 
@@ -165,17 +165,27 @@ static int extract_zones(const ccl_state_t *s,
         if (zones[i].pixel_count >= min_pixels &&
             zones[i].pixel_count <= max_pixels) {
             ranked[n_ranked].label = i;
-            ranked[n_ranked].heat = zones[i].sum_temp -
-                                    (ambient * zones[i].pixel_count);
+            /* Compute centroid for position-based sorting */
+            ranked[n_ranked].centroid_row =
+                (int)(zones[i].weighted_row / zones[i].sum_temp + 0.5f);
+            ranked[n_ranked].centroid_col =
+                (int)(zones[i].weighted_col / zones[i].sum_temp + 0.5f);
             n_ranked++;
         }
     }
 
-    /* Simple insertion sort by heat (descending) — tiny array */
+    /* Sort by position: top-to-bottom (row), then left-to-right (col).
+     * This assigns consistent spatial IDs that match physical stove layout
+     * regardless of which burner is hotter. Typical result:
+     *   Burner 1: back-left    Burner 2: back-right
+     *   Burner 3: front-left   Burner 4: front-right
+     * (after flip/mirror transforms in the browser) */
     for (int i = 1; i < n_ranked; i++) {
         ranked_t tmp = ranked[i];
         int j = i - 1;
-        while (j >= 0 && ranked[j].heat < tmp.heat) {
+        while (j >= 0 && (ranked[j].centroid_row > tmp.centroid_row ||
+               (ranked[j].centroid_row == tmp.centroid_row &&
+                ranked[j].centroid_col > tmp.centroid_col))) {
             ranked[j+1] = ranked[j];
             j--;
         }
