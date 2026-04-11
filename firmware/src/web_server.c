@@ -539,19 +539,10 @@ static const char FALLBACK_HTML[] =
 "  document.getElementById('calOverlay').style.display='none';\n"
 "  showRecipePicker();\n"
 "}\n"
-/* Load saved calibration from localStorage on page load */
+/* Load saved calibration from localStorage (display only — don't auto-send to firmware.
+ * User must explicitly re-calibrate if positions changed due to flip/mirror.) */
 "try{const saved=localStorage.getItem('siq_cal');\n"
-"  if(saved){calBurners=JSON.parse(saved);\n"
-"    if(calBurners.length>0){\n"
-"      /* Re-send to firmware on reconnect */\n"
-"      setTimeout(()=>{\n"
-"        if(ws&&ws.readyState===1){\n"
-"          const b=calBurners.map(b=>({r:b.r,c:b.c,rad:b.rad}));\n"
-"          ws.send(JSON.stringify({cmd:'set_calibration',b:b}));\n"
-"        }\n"
-"      },2000);\n"
-"    }\n"
-"  }\n"
+"  if(saved){calBurners=JSON.parse(saved)}\n"
 "}catch(e){}\n"
 "\n"
 "function drawCal(){\n"
