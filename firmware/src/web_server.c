@@ -378,6 +378,7 @@ static const char FALLBACK_HTML[] =
 "}\n"
 /* Render alerts */
 "function renderAlerts(alerts){\n"
+"  return; /* Alerts disabled during development */\n"
 "  const el=document.getElementById('alerts');\n"
 "  if(!alerts||alerts.length===0){el.innerHTML='';return}\n"
 "  const newOnes=alerts.filter(a=>!activeAlerts.find(p=>p.type===a.type&&p.burner===a.burner));\n"
