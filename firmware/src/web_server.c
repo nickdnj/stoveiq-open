@@ -338,7 +338,7 @@ static const char FALLBACK_HTML[] =
 "let temps=new Float32Array(768);\n"
 /* Audio alert */
 "let audioCtx;\n"
-"function beep(){try{if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();"
+"function beep(){return;try{if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)();"
 "const o=audioCtx.createOscillator(),g=audioCtx.createGain();"
 "o.connect(g);g.connect(audioCtx.destination);o.frequency.value=880;"
 "g.gain.value=0.3;o.start();o.stop(audioCtx.currentTime+0.15);"
@@ -1054,6 +1054,20 @@ static void dns_server_task(void *pvParameters)
 }
 
 /* ------------------------------------------------------------------ */
+/*  Debug + calibration reset endpoints                                */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t clear_cal_handler(httpd_req_t *req)
+{
+    ws_command_t cmd = { .type = CMD_SET_CALIBRATION };
+    strncpy(cmd.payload, "{\"cmd\":\"set_calibration\",\"b\":[]}", sizeof(cmd.payload));
+    xQueueSend(s_cmd_queue, &cmd, pdMS_TO_TICKS(100));
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "Calibration cleared. Switched to auto-detect (CCL).\n");
+    return ESP_OK;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Public API                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -1067,7 +1081,7 @@ esp_err_t web_server_init(void)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 16384;
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 16;
     config.max_open_sockets = 7;
 
     esp_err_t ret = httpd_start(&s_server, &config);
@@ -1109,6 +1123,11 @@ esp_err_t web_server_init(void)
     httpd_register_uri_handler(s_server, &manifest);
     httpd_register_uri_handler(s_server, &icon);
     httpd_register_uri_handler(s_server, &sw);
+
+    /* Debug / calibration reset */
+    httpd_uri_t clearcal = { .uri = "/api/clear-cal", .method = HTTP_GET,
+                             .handler = clear_cal_handler };
+    httpd_register_uri_handler(s_server, &clearcal);
 
     /* Captive portal */
     httpd_uri_t apple = { .uri = "/hotspot-detect.html", .method = HTTP_GET,
