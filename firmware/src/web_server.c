@@ -402,7 +402,8 @@ static const char FALLBACK_HTML[] =
 "function connect(){\n"
 "  ws=new WebSocket('ws://'+location.host+'/ws');\n"
 "  ws.binaryType='arraybuffer';\n"
-"  ws.onopen=()=>document.getElementById('dot').classList.add('on');\n"
+"  ws.onopen=()=>{document.getElementById('dot').classList.add('on');"
+"setTimeout(sendCalToFirmware,1000)};\n"
 "  ws.onclose=()=>{document.getElementById('dot').classList.remove('on');"
 "setTimeout(connect,2000)};\n"
 "  ws.onmessage=(e)=>{\n"
@@ -499,11 +500,16 @@ static const char FALLBACK_HTML[] =
 "  document.getElementById('calOverlay').style.display='none';\n"
 "  showRecipePicker();\n"
 "}\n"
-/* Load saved calibration from localStorage (display only — don't auto-send to firmware.
- * User must explicitly re-calibrate if positions changed due to flip/mirror.) */
+/* Load saved calibration from localStorage and re-send to firmware on connect */
 "try{const saved=localStorage.getItem('siq_cal');\n"
 "  if(saved){calBurners=JSON.parse(saved)}\n"
 "}catch(e){}\n"
+"function sendCalToFirmware(){\n"
+"  if(calBurners.length>0&&ws&&ws.readyState===1){\n"
+"    const b=calBurners.map(b=>({r:b.r,c:b.c,rad:b.rad}));\n"
+"    ws.send(JSON.stringify({cmd:'set_calibration',b:b}));\n"
+"  }\n"
+"}\n"
 "\n"
 "function drawCal(){\n"
 "  if(!calOx)return;\n"
