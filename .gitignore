@@ -19,6 +19,15 @@ Thumbs.db
 wifi_config.h
 sdkconfig
 sdkconfig.old
+# TLS private key + generated header (run scripts/gen-cert.sh to regenerate)
+firmware/src/certs/server.key
+firmware/src/certs/server.crt
+firmware/src/certs.h
 
 # Generated
 firmware/data/*.gz
+# ESP-IDF managed component cache and per-env build artifacts
+firmware/managed_components/
+firmware/dependencies.lock
+firmware/CMakeLists.txt
+firmware/sdkconfig.esp32s3

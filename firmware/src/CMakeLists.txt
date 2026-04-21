@@ -17,6 +17,7 @@ idf_component_register(
         esp_event
         esp_netif
         esp_http_server
+        esp_https_server
         nvs_flash
         spiffs
         mdns

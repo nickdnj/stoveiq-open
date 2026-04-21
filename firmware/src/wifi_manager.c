@@ -103,7 +103,8 @@ static void start_mdns(const char *hostname)
     mdns_init();
     mdns_hostname_set(hostname);
     mdns_instance_name_set("StoveIQ Cooking Monitor");
-    mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+    mdns_service_add(NULL, "_http",  "_tcp", 80,  NULL, 0);
+    mdns_service_add(NULL, "_https", "_tcp", 443, NULL, 0);
     ESP_LOGI(TAG, "mDNS: %s.local", hostname);
 }
 

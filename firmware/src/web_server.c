@@ -17,6 +17,7 @@
 #include "web_server.h"
 #include "cooking_engine.h"
 #include "esp_http_server.h"
+#include "esp_https_server.h"
 #include "esp_log.h"
 #include "esp_spiffs.h"
 #include "freertos/FreeRTOS.h"
@@ -29,6 +30,9 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
+#include "silent_mp4.h"
+#include "certs.h"
+
 static const char *TAG = "webserver";
 
 /* ------------------------------------------------------------------ */
@@ -38,10 +42,13 @@ static const char *TAG = "webserver";
 #define MAX_WS_CLIENTS  4
 
 static httpd_handle_t s_server = NULL;
+static httpd_handle_t s_redirect_server = NULL;  /* HTTP:80 → HTTPS:443 redirect */
 static int s_ws_fds[MAX_WS_CLIENTS];
 static int s_ws_count = 0;
 static SemaphoreHandle_t s_ws_mutex = NULL;
 static QueueHandle_t s_cmd_queue = NULL;
+
+/* Embedded TLS cert + key PEMs live in certs.h as C string literals. */
 
 /* ------------------------------------------------------------------ */
 /*  SPIFFS                                                             */
@@ -92,6 +99,7 @@ static const char FALLBACK_HTML[] =
 ".hdr h1{font-size:20px;color:#f59e0b}\n"
 ".hdr .dot{width:10px;height:10px;border-radius:50%;background:#555}\n"
 ".hdr .dot.on{background:#4ade80;box-shadow:0 0 6px #4ade80}\n"
+".hdr .dot.awake{background:#3b82f6;box-shadow:0 0 6px #3b82f6}\n"
 ".unit-btn{background:#222;border:1px solid #444;color:#eee;padding:4px 10px;"
 "border-radius:4px;font-size:13px;cursor:pointer}\n"
 /* Burner cards — primary UI */
@@ -148,7 +156,172 @@ static const char FALLBACK_HTML[] =
 ".settings label{display:block;font-size:12px;color:#888;margin-top:8px}\n"
 ".settings input,.settings select{width:100%;background:#222;border:1px solid #444;"
 "color:#eee;padding:6px;border-radius:4px;font-size:13px;margin-top:2px}\n"
+/* ======== Phase 1: Cookware chip, event row, modals, graph ======== */
+".cw-chip{display:inline-block;background:#222;color:#ccc;font-size:11px;"
+"padding:3px 8px;border-radius:12px;margin-bottom:6px;cursor:pointer;"
+"border:1px solid #444;user-select:none}\n"
+".cw-chip.assigned{background:#1e3a5f;color:#93c5fd;border-color:#3b82f6}\n"
+".cw-chip.recording{background:#7f1d1d;color:#fca5a5;border-color:#dc2626;"
+"animation:pulse 1.4s infinite}\n"
+"@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.55}}\n"
+".card .rec-dot{position:absolute;top:10px;left:10px;width:8px;height:8px;"
+"border-radius:50%;background:#dc2626;animation:pulse 1s infinite}\n"
+/* Modal */
+".modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);"
+"z-index:200;padding:10px;overflow-y:auto;-webkit-overflow-scrolling:touch}\n"
+".modal.open{display:block}\n"
+".modal-inner{max-width:520px;margin:30px auto;background:#1a1a1a;"
+"border:1px solid #333;border-radius:12px;padding:16px}\n"
+".modal h2{font-size:17px;color:#f59e0b;margin-bottom:12px}\n"
+".modal .close{float:right;background:none;border:none;color:#888;"
+"font-size:26px;line-height:1;cursor:pointer;padding:0 6px}\n"
+".modal .row{display:flex;gap:8px;align-items:center;padding:10px;"
+"background:#222;border-radius:8px;margin-bottom:6px;cursor:pointer}\n"
+".modal .row:active{background:#2d2d2d}\n"
+".modal .row .icon{font-size:22px;flex-shrink:0;width:30px;text-align:center}\n"
+".modal .row .info{flex:1;min-width:0}\n"
+".modal .row .info .name{font-size:14px;font-weight:600;color:#eee}\n"
+".modal .row .info .sub{font-size:11px;color:#888;margin-top:2px;"
+"overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n"
+".modal .row button.del{background:#3d1a1a;border:1px solid #dc2626;"
+"color:#fca5a5;padding:4px 10px;border-radius:4px;font-size:11px;"
+"cursor:pointer;flex-shrink:0}\n"
+".modal .actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}\n"
+".modal .actions button{flex:1;min-width:120px;padding:10px;border-radius:6px;"
+"border:1px solid #444;background:#222;color:#eee;font-size:13px;cursor:pointer}\n"
+".modal .actions button.primary{background:#f59e0b;border-color:#f59e0b;color:#000;font-weight:600}\n"
+".modal .actions button.danger{background:#3d1a1a;border-color:#dc2626;color:#fca5a5}\n"
+/* Form */
+".form-row{margin-bottom:10px}\n"
+".form-row label{display:block;font-size:12px;color:#888;margin-bottom:4px}\n"
+".form-row input,.form-row select,.form-row textarea{width:100%;background:#111;"
+"border:1px solid #333;color:#eee;padding:8px;border-radius:4px;font-size:14px;"
+"font-family:inherit}\n"
+/* Burner view (drill-in) */
+".bv-head{display:flex;justify-content:space-between;align-items:center;"
+"margin-bottom:10px;gap:8px;flex-wrap:wrap}\n"
+".bv-head h2{margin:0}\n"
+".bv-meta{background:#222;padding:8px 10px;border-radius:6px;margin-bottom:10px;"
+"font-size:12px;color:#aaa;display:flex;gap:10px;flex-wrap:wrap;align-items:center}\n"
+".bv-meta .label{color:#f59e0b;font-weight:600}\n"
+".bv-meta button{background:#333;border:1px solid #555;color:#eee;"
+"padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer}\n"
+".bv-graph{background:#0a0a0a;border:1px solid #222;border-radius:8px;"
+"padding:6px;margin-bottom:10px;position:relative}\n"
+".bv-graph canvas{display:block;width:100%;height:220px;touch-action:none}\n"
+".bv-range{display:flex;gap:4px;margin-bottom:10px}\n"
+".bv-range button{flex:1;padding:5px;font-size:11px;background:#222;"
+"border:1px solid #444;color:#aaa;border-radius:4px;cursor:pointer}\n"
+".bv-range button.active{background:#3b82f6;border-color:#3b82f6;color:#fff}\n"
+".ev-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:10px}\n"
+"@media(max-width:400px){.ev-grid{grid-template-columns:repeat(3,1fr)}}\n"
+".ev-grid button{padding:10px 4px;font-size:12px;background:#2d2d2d;"
+"border:1px solid #555;color:#eee;border-radius:5px;cursor:pointer;"
+"display:flex;flex-direction:column;align-items:center;gap:2px;line-height:1.1;"
+"min-height:52px}\n"
+".ev-grid button:active{background:#444;transform:scale(0.97)}\n"
+".ev-grid button .ev-icon{font-size:18px}\n"
+".ev-grid button.flash{background:#f59e0b;border-color:#f59e0b;color:#000}\n"
+/* Session row replay action */
+".sess-chip{display:inline-block;background:#1e3a5f;color:#93c5fd;font-size:10px;"
+"padding:2px 6px;border-radius:10px;margin-left:6px}\n"
+".sess-chip.rec{background:#7f1d1d;color:#fca5a5}\n"
+/* Annotation picker sheet */
+".ann-sheet{position:fixed;left:10px;right:10px;bottom:10px;background:#1a1a1a;"
+"border:1px solid #444;border-radius:10px;padding:12px;z-index:250;"
+"box-shadow:0 -4px 20px rgba(0,0,0,0.5);display:none;max-width:520px;margin:0 auto}\n"
+".ann-sheet.open{display:block}\n"
+".ann-sheet h3{font-size:13px;color:#f59e0b;margin-bottom:8px}\n"
 "</style></head><body>\n"
+/* Hidden silent video — NoSleep fallback when Wake Lock API is unavailable
+   (HTTP/mDNS on iOS Safari is non-secure context, Wake Lock is blocked) */
+"<video id=sleepVid src=/silent.mp4 loop muted playsinline "
+"style='position:fixed;width:1px;height:1px;opacity:0;pointer-events:none'></video>\n"
+/* ============ Phase 1 modals ============ */
+/* Burner View (drill-in on a burner card) */
+"<div class=modal id=burnerView>\n"
+"  <div class=modal-inner>\n"
+"    <button class=close onclick=closeBurnerView()>&times;</button>\n"
+"    <div class=bv-head><h2 id=bvTitle>Burner</h2></div>\n"
+"    <div class=bv-meta id=bvMeta></div>\n"
+"    <div class=bv-graph><canvas id=bvCanvas></canvas></div>\n"
+"    <div class=bv-range>\n"
+"      <button data-range=60000 onclick=\"bvSetRange(60000)\">1m</button>\n"
+"      <button data-range=300000 class=active onclick=\"bvSetRange(300000)\">5m</button>\n"
+"      <button data-range=600000 onclick=\"bvSetRange(600000)\">10m</button>\n"
+"      <button data-range=0 onclick=\"bvSetRange(0)\">All</button>\n"
+"    </div>\n"
+"    <div class=ev-grid id=bvEvents></div>\n"
+"    <div class=actions>\n"
+"      <button id=bvEndBtn onclick=bvEndSession() class=danger>End session</button>\n"
+"      <button onclick=bvCalibrateBoil()>Calibrate boil (100\\u00B0C)</button>\n"
+"    </div>\n"
+"  </div>\n"
+"</div>\n"
+/* Cookware picker (shown when starting a session) */
+"<div class=modal id=cwPicker>\n"
+"  <div class=modal-inner>\n"
+"    <button class=close onclick=closeCwPicker()>&times;</button>\n"
+"    <h2>What's on <span id=cwPickerBurner></span>?</h2>\n"
+"    <div id=cwPickerList></div>\n"
+"    <div class=actions>\n"
+"      <button onclick=showCwForm()>+ Add cookware</button>\n"
+"      <button onclick=cwPickerClear()>Remove cookware</button>\n"
+"    </div>\n"
+"  </div>\n"
+"</div>\n"
+/* Cookware library (from settings) */
+"<div class=modal id=cwLibrary>\n"
+"  <div class=modal-inner>\n"
+"    <button class=close onclick=closeCwLibrary()>&times;</button>\n"
+"    <h2>Cookware library</h2>\n"
+"    <div id=cwLibList></div>\n"
+"    <div class=actions>\n"
+"      <button class=primary onclick=showCwForm()>+ Add cookware</button>\n"
+"    </div>\n"
+"  </div>\n"
+"</div>\n"
+/* Cookware add/edit form */
+"<div class=modal id=cwForm>\n"
+"  <div class=modal-inner>\n"
+"    <button class=close onclick=closeCwForm()>&times;</button>\n"
+"    <h2 id=cwFormTitle>Add cookware</h2>\n"
+"    <div class=form-row><label>Name</label>\n"
+"      <input id=cwFormName maxlength=40 placeholder=\"e.g. 10&quot; non-stick egg pan\"></div>\n"
+"    <div class=form-row><label>Icon (emoji)</label>\n"
+"      <input id=cwFormIcon maxlength=2 value=\"\\uD83C\\uDF73\"></div>\n"
+"    <div class=form-row><label>Material</label>\n"
+"      <select id=cwFormMaterial></select></div>\n"
+"    <div class=form-row><label>Notes (optional)</label>\n"
+"      <input id=cwFormNotes maxlength=80></div>\n"
+"    <div class=actions>\n"
+"      <button onclick=closeCwForm()>Cancel</button>\n"
+"      <button class=primary onclick=saveCwForm()>Save</button>\n"
+"    </div>\n"
+"  </div>\n"
+"</div>\n"
+/* Sessions browser */
+"<div class=modal id=sessModal>\n"
+"  <div class=modal-inner>\n"
+"    <button class=close onclick=closeSessions()>&times;</button>\n"
+"    <h2>Cook sessions</h2>\n"
+"    <div id=sessList></div>\n"
+"    <div class=actions>\n"
+"      <button class=primary onclick=exportBackup()>Export backup</button>\n"
+"      <button onclick=\"document.getElementById('impFile').click()\">Import\\u2026</button>\n"
+"    </div>\n"
+"    <input type=file id=impFile accept=.json "
+"style=\"display:none\" onchange=importBackup(event)>\n"
+"  </div>\n"
+"</div>\n"
+/* Annotation picker sheet (for tap-on-graph) */
+"<div class=ann-sheet id=annSheet>\n"
+"  <h3 id=annHdr>Add event</h3>\n"
+"  <div class=ev-grid id=annEvents></div>\n"
+"  <div class=actions>\n"
+"    <button onclick=closeAnn()>Cancel</button>\n"
+"  </div>\n"
+"</div>\n"
 /* Alert bar */
 "<div class=alert-bar id=alerts></div>\n"
 /* Header */
@@ -158,11 +331,16 @@ static const char FALLBACK_HTML[] =
 "    <button class=unit-btn onclick=showRecipePicker()>Recipes</button>\n"
 "    <button class=unit-btn id=unitBtn onclick=toggleUnit()>C</button>\n"
 "    <button class=settings-btn onclick=toggleSettings()>&#9881;</button>\n"
+"    <div class=dot id=wakeDot title='Screen kept awake'></div>\n"
 "    <div class=dot id=dot></div>\n"
 "  </div>\n"
 "</div>\n"
 /* Settings */
 "<div class=settings id=settingsPanel>\n"
+"  <div style='display:flex;gap:8px;margin-bottom:10px'>\n"
+"    <button class=unit-btn style='flex:1' onclick=openCwLibrary()>\\uD83C\\uDF73 Cookware library</button>\n"
+"    <button class=unit-btn style='flex:1' onclick=openSessions()>\\uD83D\\uDCCA Sessions &amp; backup</button>\n"
+"  </div>\n"
 "  <label>Boil Temp<input type=number id=cfgBoil value=95 step=1></label>\n"
 "  <label>Smoke Point<input type=number id=cfgSmoke value=230 step=1></label>\n"
 "  <label>Preheat Target<input type=number id=cfgPreheat value=200 step=1></label>\n"
@@ -364,13 +542,25 @@ static const char FALLBACK_HTML[] =
 "    const rtag=recipeActive&&recipeBurner===b.id"
 "      ?'<div class=recipe-tag>'+recipeName+'</div>':'';\n"
 "    const bname=(calBurners[b.id]&&calBurners[b.id].name)||'Burner '+(b.id+1);\n"
-"    return '<div class=\"card '+cls+'\">'\n"
+/* Phase 1 additions: cookware chip, rec dot, adjusted temp */
+"    const cwId=(typeof burnerCookware!=='undefined'?burnerCookware[b.id]:null);\n"
+"    const cw=(cwId&&typeof findCw==='function')?findCw(cwId):null;\n"
+"    const hasSession=(typeof activeSessions!=='undefined')&&!!activeSessions[b.id];\n"
+"    const chipCls=hasSession?'cw-chip recording':(cw?'cw-chip assigned':'cw-chip');\n"
+"    const chipTxt=cw?(cw.icon+' '+cw.name):'+ tap to set cookware';\n"
+"    const chip='<div class=\"'+chipCls+'\">'+(typeof esc==='function'?esc(chipTxt):chipTxt)+'</div>';\n"
+"    const recDot=hasSession?'<div class=rec-dot></div>':'';\n"
+"    const dispT=(typeof adjustTemp==='function')?adjustTemp(b.id,b.temp):b.temp;\n"
+"    const dispMax=(typeof adjustTemp==='function')?adjustTemp(b.id,b.max):b.max;\n"
+"    return '<div class=\"card '+cls+'\" onclick=\"cardTap('+b.id+',event)\">'\n"
+"      +recDot\n"
 "      +'<div class=label>'+bname+'</div>'\n"
+"      +chip\n"
 "      +'<div class=trend>'+arrow+'</div>'\n"
 "      +'<div class=\"temp '+(b.state===0?'off':cls)+'\">'"
-"      +(b.state===0?'OFF':fmtT(b.temp))+'</div>'\n"
+"      +(b.state===0?'OFF':fmtT(dispT))+'</div>'\n"
 "      +'<div class=heat-bar><div style=\"width:'+heatPct+'%;background:'+heatColor+'\"></div></div>'\n"
-"      +'<div class=meta>'+(timeStr?'Peak '+fmtT(b.max)+' | '+timeStr"
+"      +'<div class=meta>'+(timeStr?'Peak '+fmtT(dispMax)+' | '+timeStr"
 "        :'Ambient')+'</div>'\n"
 "      +'<span class=\"state-badge '+cls+'\">'+st+'</span>'\n"
 "      +rtag+timerHtml+'</div>';\n"
@@ -400,7 +590,8 @@ static const char FALLBACK_HTML[] =
 /* WebSocket */
 "let ws;\n"
 "function connect(){\n"
-"  ws=new WebSocket('ws://'+location.host+'/ws');\n"
+"  const wsProto=(location.protocol==='https:')?'wss:':'ws:';\n"
+"  ws=new WebSocket(wsProto+'//'+location.host+'/ws');\n"
 "  ws.binaryType='arraybuffer';\n"
 "  ws.onopen=()=>{document.getElementById('dot').classList.add('on');"
 "setTimeout(sendCalToFirmware,1000)};\n"
@@ -414,6 +605,7 @@ static const char FALLBACK_HTML[] =
 "max:b.max,rate:b.rate,row:b.row,col:b.col,px:b.px,on:b.on||0}));\n"
 "        renderCards();\n"
 "        renderAlerts(d.alerts||[]);\n"
+"        if(typeof phase1Hook==='function')phase1Hook(burners);\n"
 "      }\n"
 "    }else{\n"
 "      /* Binary thermal frame — store for calibration overlay only */\n"
@@ -670,6 +862,635 @@ static const char FALLBACK_HTML[] =
 "const origConnect=connect;\n"
 "connect=function(){origConnect();setTimeout(patchWs,500)};\n"
 "patchWs();\n"
+/* ================================================================
+   Phase 1: Cookware library + Teaching mode + Burner view + Graph
+   ================================================================ */
+/* Material presets */
+"const MATERIALS=[\n"
+"  {id:'cast_iron',name:'Cast iron (seasoned)',em:0.95},\n"
+"  {id:'non_stick',name:'Non-stick / enameled',em:0.90},\n"
+"  {id:'ss_scuffed',name:'Stainless (scuffed)',em:0.35},\n"
+"  {id:'ss_polished',name:'Stainless (polished)',em:0.16},\n"
+"  {id:'aluminum_ox',name:'Aluminum (oxidized)',em:0.30},\n"
+"  {id:'aluminum_shiny',name:'Aluminum (shiny)',em:0.08},\n"
+"  {id:'copper',name:'Copper',em:0.05},\n"
+"  {id:'glass',name:'Glass / Pyrex',em:0.88},\n"
+"];\n"
+/* Event vocabulary (phase markers) */
+"const EVENTS=[\n"
+"  {id:'oil_in',icon:'\\uD83E\\uDDC8',label:'Oil in'},\n"       /* 🧈 butter/oil */
+"  {id:'food_in',icon:'\\uD83C\\uDF45',label:'Food in'},\n"     /* 🍅 */
+"  {id:'water_added',icon:'\\uD83D\\uDCA7',label:'Water'},\n"   /* 💧 */
+"  {id:'rolling_boil',icon:'\\uD83E\\uDEE7',label:'Boil'},\n"   /* 🫧 */
+"  {id:'stirred',icon:'\\uD83D\\uDD04',label:'Stir'},\n"        /* 🔄 */
+"  {id:'flipped',icon:'\\uD83D\\uDD03',label:'Flip'},\n"        /* 🔃 */
+"  {id:'lid_on',icon:'\\uD83C\\uDFA9',label:'Lid on'},\n"       /* 🎩 */
+"  {id:'lid_off',icon:'\\uD83D\\uDC52',label:'Lid off'},\n"     /* 👒 */
+"  {id:'done',icon:'\\u2713',label:'Done'},\n"                  /* ✓ */
+"  {id:'note',icon:'\\uD83D\\uDCDD',label:'Note'},\n"           /* 📝 */
+"];\n"
+"const SESSION_LABELS=['sauté','boil','sear','simmer','fry','reduce','melt','steam','eggs'];\n"
+/* Persisted state (localStorage, schema v1) */
+"let cookwareLib=[],calibOffsets={},burnerCookware={},activeSessions={},pastSessions=[];\n"
+"function loadState(){\n"
+"  try{cookwareLib=JSON.parse(localStorage.getItem('siq_cookware')||'[]')}catch(e){}\n"
+"  try{calibOffsets=JSON.parse(localStorage.getItem('siq_calib_offsets')||'{}')}catch(e){}\n"
+"  try{burnerCookware=JSON.parse(localStorage.getItem('siq_burner_cookware')||'{}')}catch(e){}\n"
+"  try{activeSessions=JSON.parse(localStorage.getItem('siq_active_sessions')||'{}')}catch(e){}\n"
+"  try{pastSessions=JSON.parse(localStorage.getItem('siq_sessions')||'[]')}catch(e){}\n"
+"}\n"
+"function saveCw(){localStorage.setItem('siq_cookware',JSON.stringify(cookwareLib))}\n"
+"function saveBC(){localStorage.setItem('siq_burner_cookware',JSON.stringify(burnerCookware))}\n"
+"function saveCO(){localStorage.setItem('siq_calib_offsets',JSON.stringify(calibOffsets))}\n"
+"function saveAS(){localStorage.setItem('siq_active_sessions',JSON.stringify(activeSessions))}\n"
+"function savePS(){\n"
+"  if(pastSessions.length>200)pastSessions=pastSessions.slice(-200);\n"
+"  localStorage.setItem('siq_sessions',JSON.stringify(pastSessions));\n"
+"}\n"
+"loadState();\n"
+/* Helpers */
+"function esc(s){return String(s==null?'':s).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\\'':'&#39;'}[c]))}\n"
+"function findCw(id){return cookwareLib.find(c=>c.id===id)}\n"
+"function bName(bid){return (calBurners[bid]&&calBurners[bid].name)||'Burner '+(bid+1)}\n"
+"function fmtDur(ms){const s=Math.max(0,Math.floor(ms/1000));const m=Math.floor(s/60);return m+'m '+(s%60)+'s'}\n"
+"function newId(p){return p+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,8)}\n"
+/* Apply (burner × cookware) offset to a raw temperature — displayed only */
+"function adjustTemp(bid,rawC){\n"
+"  const cwId=burnerCookware[bid];\n"
+"  if(cwId==null)return rawC;\n"
+"  const off=calibOffsets[bid+'_'+cwId]||0;\n"
+"  return rawC+off;\n"
+"}\n"
+/* Card-tap guard: ignore clicks on inner buttons */
+"function cardTap(bid,ev){\n"
+"  if(ev&&ev.target&&(ev.target.closest('button')||ev.target.tagName==='INPUT'))return;\n"
+"  openBurnerView(bid);\n"
+"}\n"
+/* ====== Cookware Library ====== */
+"function openCwLibrary(){renderCwLib();document.getElementById('cwLibrary').classList.add('open')}\n"
+"function closeCwLibrary(){document.getElementById('cwLibrary').classList.remove('open')}\n"
+"function renderCwLib(){\n"
+"  const el=document.getElementById('cwLibList');\n"
+"  if(cookwareLib.length===0){\n"
+"    el.innerHTML=\"<div style='color:#888;text-align:center;padding:20px'>No cookware yet.</div>\";\n"
+"    return;\n"
+"  }\n"
+"  el.innerHTML=cookwareLib.map(cw=>{\n"
+"    const m=MATERIALS.find(x=>x.id===cw.material)||{name:'?'};\n"
+"    return \"<div class=row onclick=\\\"showCwForm('\"+cw.id+\"')\\\">\"\n"
+"      +'<span class=icon>'+esc(cw.icon||'\\uD83C\\uDF73')+'</span>'\n"
+"      +'<div class=info><div class=name>'+esc(cw.name)+'</div>'\n"
+"      +'<div class=sub>'+esc(m.name)+(cw.notes?' · '+esc(cw.notes):'')+'</div></div>'\n"
+"      +\"<button class=del onclick=\\\"event.stopPropagation();delCw('\"+cw.id+\"')\\\">Del</button>\"\n"
+"      +'</div>';\n"
+"  }).join('');\n"
+"}\n"
+"let editingCwId=null;\n"
+"function showCwForm(id){\n"
+"  editingCwId=typeof id==='string'?id:null;\n"
+"  const matSel=document.getElementById('cwFormMaterial');\n"
+"  matSel.innerHTML=MATERIALS.map(m=>'<option value='+m.id+'>'+m.name+' (\\u03B5='+m.em+')</option>').join('');\n"
+"  if(editingCwId){\n"
+"    const cw=findCw(editingCwId);\n"
+"    document.getElementById('cwFormTitle').textContent='Edit cookware';\n"
+"    document.getElementById('cwFormName').value=cw.name;\n"
+"    document.getElementById('cwFormIcon').value=cw.icon||'\\uD83C\\uDF73';\n"
+"    document.getElementById('cwFormMaterial').value=cw.material;\n"
+"    document.getElementById('cwFormNotes').value=cw.notes||'';\n"
+"  }else{\n"
+"    document.getElementById('cwFormTitle').textContent='Add cookware';\n"
+"    document.getElementById('cwFormName').value='';\n"
+"    document.getElementById('cwFormIcon').value='\\uD83C\\uDF73';\n"
+"    document.getElementById('cwFormMaterial').value=MATERIALS[0].id;\n"
+"    document.getElementById('cwFormNotes').value='';\n"
+"  }\n"
+"  document.getElementById('cwForm').classList.add('open');\n"
+"}\n"
+"function closeCwForm(){document.getElementById('cwForm').classList.remove('open')}\n"
+"function saveCwForm(){\n"
+"  const name=document.getElementById('cwFormName').value.trim();\n"
+"  if(!name){alert('Name required');return}\n"
+"  const cw={\n"
+"    id:editingCwId||newId('cw'),\n"
+"    name:name,\n"
+"    icon:document.getElementById('cwFormIcon').value.trim()||'\\uD83C\\uDF73',\n"
+"    material:document.getElementById('cwFormMaterial').value,\n"
+"    notes:document.getElementById('cwFormNotes').value.trim(),\n"
+"    created:editingCwId?(findCw(editingCwId).created):new Date().toISOString(),\n"
+"  };\n"
+"  if(editingCwId){\n"
+"    const i=cookwareLib.findIndex(c=>c.id===editingCwId);\n"
+"    cookwareLib[i]=cw;\n"
+"  }else{cookwareLib.push(cw)}\n"
+"  saveCw();closeCwForm();renderCwLib();renderCwPickerList();renderCards();\n"
+"}\n"
+"function delCw(id){\n"
+"  if(!confirm('Delete this cookware?\\nAny calibration and burner assignment for it will be removed.'))return;\n"
+"  cookwareLib=cookwareLib.filter(c=>c.id!==id);\n"
+"  Object.keys(burnerCookware).forEach(bid=>{\n"
+"    if(burnerCookware[bid]===id){\n"
+"      if(activeSessions[bid])endSessionInternal(bid);\n"
+"      delete burnerCookware[bid];\n"
+"    }\n"
+"  });\n"
+"  Object.keys(calibOffsets).forEach(k=>{if(k.endsWith('_'+id))delete calibOffsets[k]});\n"
+"  saveCw();saveBC();saveCO();renderCwLib();renderCards();\n"
+"}\n"
+/* ====== Cookware picker (when starting a session) ====== */
+"let cwPickerBurnerId=-1;\n"
+"function openCwPicker(bid){\n"
+"  cwPickerBurnerId=bid;\n"
+"  document.getElementById('cwPickerBurner').textContent=bName(bid);\n"
+"  renderCwPickerList();\n"
+"  document.getElementById('cwPicker').classList.add('open');\n"
+"}\n"
+"function closeCwPicker(){document.getElementById('cwPicker').classList.remove('open')}\n"
+"function renderCwPickerList(){\n"
+"  const el=document.getElementById('cwPickerList');\n"
+"  if(!el)return;\n"
+"  if(cookwareLib.length===0){\n"
+"    el.innerHTML=\"<div style='color:#888;text-align:center;padding:16px'>No cookware yet — add one below</div>\";\n"
+"    return;\n"
+"  }\n"
+"  el.innerHTML=cookwareLib.map(cw=>\n"
+"    \"<div class=row onclick=\\\"cwPickerChoose('\"+cw.id+\"')\\\">\"\n"
+"    +'<span class=icon>'+esc(cw.icon||'\\uD83C\\uDF73')+'</span>'\n"
+"    +'<div class=info><div class=name>'+esc(cw.name)+'</div>'\n"
+"    +'<div class=sub>'+esc((MATERIALS.find(m=>m.id===cw.material)||{}).name||'')+'</div></div>'\n"
+"    +'</div>'\n"
+"  ).join('');\n"
+"}\n"
+"function cwPickerChoose(cwId){\n"
+"  burnerCookware[cwPickerBurnerId]=cwId;\n"
+"  saveBC();\n"
+"  closeCwPicker();\n"
+"  startSession(cwPickerBurnerId,cwId);\n"
+"  openBurnerView(cwPickerBurnerId);\n"
+"  renderCards();\n"
+"}\n"
+"function cwPickerClear(){\n"
+"  if(activeSessions[cwPickerBurnerId])endSessionInternal(cwPickerBurnerId);\n"
+"  delete burnerCookware[cwPickerBurnerId];\n"
+"  saveBC();closeCwPicker();renderCards();\n"
+"}\n"
+/* ====== Session lifecycle ====== */
+"function startSession(bid,cwId){\n"
+"  const suggest=SESSION_LABELS.join(' · ');\n"
+"  const label=prompt('Label this cook?\\n('+suggest+')','')||'unlabeled';\n"
+"  activeSessions[bid]={\n"
+"    id:newId('s'),\n"
+"    burner_id:bid,\n"
+"    cookware_id:cwId,\n"
+"    label:label.trim(),\n"
+"    started:new Date().toISOString(),\n"
+"    started_ms:Date.now(),\n"
+"    events:[],\n"
+"    samples:[],\n"
+"  };\n"
+"  saveAS();\n"
+"}\n"
+"function endSessionInternal(bid){\n"
+"  const s=activeSessions[bid];\n"
+"  if(!s)return;\n"
+"  s.ended=new Date().toISOString();\n"
+"  s.duration_ms=Date.now()-s.started_ms;\n"
+"  pastSessions.push(s);\n"
+"  savePS();\n"
+"  delete activeSessions[bid];\n"
+"  saveAS();\n"
+"}\n"
+"function endSession(bid){\n"
+"  endSessionInternal(bid);\n"
+"  delete burnerCookware[bid];\n"
+"  saveBC();\n"
+"  renderCards();\n"
+"}\n"
+"function markEvent(bid,type,noteText){\n"
+"  const s=activeSessions[bid];\n"
+"  if(!s)return;\n"
+"  const t=Date.now()-s.started_ms;\n"
+"  const ev={t_ms:t,type:type,at:new Date().toISOString()};\n"
+"  if(noteText)ev.note=noteText;\n"
+"  s.events.push(ev);\n"
+"  saveAS();\n"
+"  if(bvOpenBurnerId===bid){bvRender();bvDraw()}\n"
+"}\n"
+"function recordSample(bid,tempRaw,state){\n"
+"  const s=activeSessions[bid];\n"
+"  if(!s)return;\n"
+"  const t=Date.now()-s.started_ms;\n"
+"  const last=s.samples[s.samples.length-1];\n"
+"  if(last&&t-last.t_ms<450)return;\n"
+"  s.samples.push({t_ms:t,temp_c:+tempRaw.toFixed(2),state:state});\n"
+"  if(s.samples.length%20===0)saveAS();\n"
+"  if(bvOpenBurnerId===bid)bvDraw();\n"
+"}\n"
+/* ====== Burner View (drill-in) ====== */
+"let bvOpenBurnerId=-1,bvOpenSessionId=null,bvRangeMs=300000,bvReplayMode=false;\n"
+"function openBurnerView(bid,pastSessionId){\n"
+"  if(!pastSessionId&&!burnerCookware[bid]){openCwPicker(bid);return}\n"
+"  bvOpenBurnerId=bid;\n"
+"  bvOpenSessionId=pastSessionId||null;\n"
+"  bvReplayMode=!!pastSessionId;\n"
+"  if(bvReplayMode){bvRangeMs=0}\n"  /* past = all */
+"  else{bvRangeMs=300000}\n"
+"  [60000,300000,600000,0].forEach(r=>{\n"
+"    const b=document.querySelector(\".bv-range button[data-range='\"+r+\"']\");\n"
+"    if(b)b.classList.toggle('active',r===bvRangeMs);\n"
+"  });\n"
+"  document.getElementById('burnerView').classList.add('open');\n"
+"  bvRender();\n"
+"  setTimeout(bvDraw,50);\n"  /* wait for canvas to get layout */
+"}\n"
+"function closeBurnerView(){\n"
+"  document.getElementById('burnerView').classList.remove('open');\n"
+"  bvOpenBurnerId=-1;bvOpenSessionId=null;bvReplayMode=false;\n"
+"}\n"
+"function bvGetSession(){\n"
+"  if(bvReplayMode)return pastSessions.find(s=>s.id===bvOpenSessionId);\n"
+"  return activeSessions[bvOpenBurnerId];\n"
+"}\n"
+"function bvRender(){\n"
+"  const bid=bvOpenBurnerId;\n"
+"  if(bid<0)return;\n"
+"  const s=bvGetSession();\n"
+"  const cw=s?findCw(s.cookware_id):(burnerCookware[bid]?findCw(burnerCookware[bid]):null);\n"
+"  document.getElementById('bvTitle').textContent=bName(bid);\n"
+"  const metaEl=document.getElementById('bvMeta');\n"
+"  let meta='';\n"
+"  if(cw){\n"
+"    meta+='<span class=icon>'+esc(cw.icon)+'</span>'\n"
+"      +'<span class=label>'+esc(cw.name)+'</span>';\n"
+"  }else{\n"
+"    meta+='<span style=\"color:#888\">No cookware selected</span>';\n"
+"  }\n"
+"  if(!bvReplayMode){\n"
+"    meta+='<button onclick=bvChangeCookware()>Change</button>';\n"
+"  }\n"
+"  if(s){\n"
+"    meta+=' <span>Label: <b>'+esc(s.label)+'</b></span>'\n"
+"      +'<button onclick=bvEditLabel()>Edit</button>';\n"
+"    const dur=s.duration_ms||(Date.now()-s.started_ms);\n"
+"    meta+=' <span>'+fmtDur(dur)+'</span>';\n"
+"    meta+=' <span>'+s.samples.length+' samples</span>';\n"
+"    meta+=' <span>'+s.events.length+' events</span>';\n"
+"  }\n"
+"  metaEl.innerHTML=meta;\n"
+"  /* Event buttons */\n"
+"  const evEl=document.getElementById('bvEvents');\n"
+"  evEl.innerHTML=EVENTS.map(ev=>\n"
+"    \"<button onclick=\\\"bvMark('\"+ev.id+\"')\\\">\"\n"
+"    +'<span class=ev-icon>'+ev.icon+'</span>'\n"
+"    +esc(ev.label)+'</button>'\n"
+"  ).join('');\n"
+"  /* Toggle End button text */\n"
+"  document.getElementById('bvEndBtn').textContent=bvReplayMode?'Delete session':'End session';\n"
+"}\n"
+"function bvMark(type){\n"
+"  const bid=bvOpenBurnerId;\n"
+"  if(bvReplayMode){\n"
+"    /* Add event to past session at current viewer cursor — for now, append at now */\n"
+"    alert('To annotate a past session, tap on the graph at the moment you want to mark.');\n"
+"    return;\n"
+"  }\n"
+"  if(!activeSessions[bid]){\n"
+"    alert('No active session. Pick a cookware first.');return;\n"
+"  }\n"
+"  let noteText=null;\n"
+"  if(type==='note'){\n"
+"    noteText=prompt('Note:','');\n"
+"    if(!noteText)return;\n"
+"  }\n"
+"  markEvent(bid,type,noteText);\n"
+"  if(typeof beep==='function')try{beep()}catch(e){}\n"
+"  /* brief visual flash on the button */\n"
+"  const btns=document.querySelectorAll('#bvEvents button');\n"
+"  btns.forEach(b=>{if(b.textContent.includes((EVENTS.find(e=>e.id===type)||{}).label)){\n"
+"    b.classList.add('flash');setTimeout(()=>b.classList.remove('flash'),300);\n"
+"  }});\n"
+"}\n"
+"function bvChangeCookware(){\n"
+"  const bid=bvOpenBurnerId;\n"
+"  /* End current session, clear assignment, open picker */\n"
+"  if(activeSessions[bid]){\n"
+"    if(!confirm('End current session and switch cookware?'))return;\n"
+"    endSessionInternal(bid);\n"
+"  }\n"
+"  delete burnerCookware[bid];\n"
+"  saveBC();\n"
+"  closeBurnerView();\n"
+"  openCwPicker(bid);\n"
+"}\n"
+"function bvEditLabel(){\n"
+"  const s=bvGetSession();if(!s)return;\n"
+"  const v=prompt('Label:',s.label);if(v==null)return;\n"
+"  s.label=v.trim()||'unlabeled';\n"
+"  if(bvReplayMode)savePS();else saveAS();\n"
+"  bvRender();\n"
+"}\n"
+"function bvEndSession(){\n"
+"  const bid=bvOpenBurnerId;\n"
+"  if(bvReplayMode){\n"
+"    if(!confirm('Delete this past session?'))return;\n"
+"    pastSessions=pastSessions.filter(s=>s.id!==bvOpenSessionId);\n"
+"    savePS();closeBurnerView();renderSessList();return;\n"
+"  }\n"
+"  if(!confirm('End this cook session?'))return;\n"
+"  endSession(bid);\n"
+"  closeBurnerView();\n"
+"}\n"
+"function bvCalibrateBoil(){\n"
+"  /* Phase 2: auto-detect rolling boil. Phase 1: manual one-point. */\n"
+"  const bid=bvOpenBurnerId;\n"
+"  const cwId=burnerCookware[bid];\n"
+"  if(!cwId){alert('Assign cookware first.');return}\n"
+"  const b=burners.find(x=>x.id===bid);\n"
+"  if(!b){alert('No live reading.');return}\n"
+"  const rawC=b.temp;\n"
+"  const v=prompt('What is the actual water temp right now, in \\u00B0C?\\nFor a rolling boil, enter 100.\\nSensor is reading '+rawC.toFixed(1)+'\\u00B0C.','100');\n"
+"  if(v==null)return;\n"
+"  const actual=parseFloat(v);\n"
+"  if(isNaN(actual)){alert('Invalid number');return}\n"
+"  const offset=actual-rawC;\n"
+"  calibOffsets[bid+'_'+cwId]=offset;\n"
+"  saveCO();\n"
+"  alert('Saved offset '+(offset>=0?'+':'')+offset.toFixed(1)+'\\u00B0C for this (burner,cookware).');\n"
+"  bvRender();bvDraw();renderCards();\n"
+"}\n"
+"function bvSetRange(ms){\n"
+"  bvRangeMs=ms;\n"
+"  [60000,300000,600000,0].forEach(r=>{\n"
+"    const b=document.querySelector(\".bv-range button[data-range='\"+r+\"']\");\n"
+"    if(b)b.classList.toggle('active',r===ms);\n"
+"  });\n"
+"  bvDraw();\n"
+"}\n"
+/* ====== Canvas temp graph ====== */
+"function bvDraw(){\n"
+"  const cv=document.getElementById('bvCanvas');\n"
+"  if(!cv||!document.getElementById('burnerView').classList.contains('open'))return;\n"
+"  const dpr=window.devicePixelRatio||1;\n"
+"  const w=cv.clientWidth,h=cv.clientHeight;\n"
+"  if(w===0||h===0)return;\n"
+"  cv.width=w*dpr;cv.height=h*dpr;\n"
+"  const cx=cv.getContext('2d');\n"
+"  cx.setTransform(dpr,0,0,dpr,0,0);\n"
+"  cx.clearRect(0,0,w,h);\n"
+"  cx.fillStyle='#0a0a0a';cx.fillRect(0,0,w,h);\n"
+"  const s=bvGetSession();\n"
+"  if(!s||s.samples.length<1){\n"
+"    cx.fillStyle='#555';cx.font='12px system-ui';cx.textAlign='center';\n"
+"    cx.fillText('No samples yet',w/2,h/2);return;\n"
+"  }\n"
+"  const now=bvReplayMode?((s.ended?new Date(s.ended).getTime():s.started_ms)-s.started_ms):(Date.now()-s.started_ms);\n"
+"  let tMin=0,tMax=now;\n"
+"  if(bvRangeMs>0){tMin=Math.max(0,now-bvRangeMs);tMax=now}\n"
+"  /* Filter samples to window */\n"
+"  const samp=s.samples.filter(x=>x.t_ms>=tMin&&x.t_ms<=tMax);\n"
+"  if(samp.length<1){\n"
+"    cx.fillStyle='#555';cx.font='12px system-ui';cx.textAlign='center';\n"
+"    cx.fillText('No samples in this window',w/2,h/2);return;\n"
+"  }\n"
+"  /* Y-auto-scale with 50° floor, 30° headroom */\n"
+"  let yMin=Infinity,yMax=-Infinity;\n"
+"  samp.forEach(x=>{const adj=adjustTemp(s.burner_id,x.temp_c);if(adj<yMin)yMin=adj;if(adj>yMax)yMax=adj});\n"
+"  yMin=Math.min(yMin,yMax-50);\n"
+"  yMax=yMax+Math.max(20,(yMax-yMin)*0.15);\n"
+"  yMin=Math.max(0,yMin-10);\n"
+"  const pad={l:42,r:10,t:14,b:22};\n"
+"  const gw=w-pad.l-pad.r,gh=h-pad.t-pad.b;\n"
+"  /* Axes */\n"
+"  cx.strokeStyle='#222';cx.lineWidth=1;\n"
+"  cx.beginPath();cx.moveTo(pad.l,pad.t);cx.lineTo(pad.l,pad.t+gh);\n"
+"  cx.lineTo(pad.l+gw,pad.t+gh);cx.stroke();\n"
+"  /* Y gridlines + labels */\n"
+"  cx.fillStyle='#666';cx.font='10px system-ui';cx.textAlign='right';cx.textBaseline='middle';\n"
+"  const yTicks=4;\n"
+"  for(let i=0;i<=yTicks;i++){\n"
+"    const yv=yMin+(yMax-yMin)*(1-i/yTicks);\n"
+"    const yp=pad.t+gh*(i/yTicks);\n"
+"    cx.strokeStyle='#1a1a1a';cx.beginPath();cx.moveTo(pad.l,yp);cx.lineTo(pad.l+gw,yp);cx.stroke();\n"
+"    cx.fillText(fmtT(yv).replace('\\u00B0',''),pad.l-4,yp);\n"
+"  }\n"
+"  /* X time labels */\n"
+"  cx.textAlign='center';cx.textBaseline='top';\n"
+"  const xTicks=4;\n"
+"  for(let i=0;i<=xTicks;i++){\n"
+"    const tv=tMin+(tMax-tMin)*(i/xTicks);\n"
+"    const xp=pad.l+gw*(i/xTicks);\n"
+"    cx.fillText(fmtDur(tv),xp,pad.t+gh+4);\n"
+"  }\n"
+"  /* Curve */\n"
+"  const x2px=t=>pad.l+gw*((t-tMin)/(tMax-tMin||1));\n"
+"  const y2px=v=>pad.t+gh*(1-(v-yMin)/(yMax-yMin||1));\n"
+"  cx.strokeStyle='#f59e0b';cx.lineWidth=1.8;cx.beginPath();\n"
+"  samp.forEach((x,i)=>{\n"
+"    const px=x2px(x.t_ms),py=y2px(adjustTemp(s.burner_id,x.temp_c));\n"
+"    if(i===0)cx.moveTo(px,py);else cx.lineTo(px,py);\n"
+"  });\n"
+"  cx.stroke();\n"
+"  /* Event markers */\n"
+"  (s.events||[]).forEach(ev=>{\n"
+"    if(ev.t_ms<tMin||ev.t_ms>tMax)return;\n"
+"    const px=x2px(ev.t_ms);\n"
+"    cx.strokeStyle='#3b82f6';cx.lineWidth=1;\n"
+"    cx.beginPath();cx.moveTo(px,pad.t);cx.lineTo(px,pad.t+gh);cx.stroke();\n"
+"    const e=EVENTS.find(q=>q.id===ev.type)||{icon:'?'};\n"
+"    cx.fillStyle='#3b82f6';cx.beginPath();cx.arc(px,pad.t+8,6,0,Math.PI*2);cx.fill();\n"
+"    cx.fillStyle='#fff';cx.font='9px system-ui';cx.textAlign='center';cx.textBaseline='middle';\n"
+"    cx.fillText(e.icon,px,pad.t+8);\n"
+"  });\n"
+"  /* Current temp cursor (active sessions only) */\n"
+"  if(!bvReplayMode){\n"
+"    const last=samp[samp.length-1];\n"
+"    if(last){\n"
+"      const px=x2px(last.t_ms),py=y2px(adjustTemp(s.burner_id,last.temp_c));\n"
+"      cx.fillStyle='#f59e0b';cx.beginPath();cx.arc(px,py,4,0,Math.PI*2);cx.fill();\n"
+"      cx.fillStyle='#f59e0b';cx.font='bold 12px system-ui';cx.textAlign='left';cx.textBaseline='bottom';\n"
+"      cx.fillText(fmtT(adjustTemp(s.burner_id,last.temp_c)),px+8,py-2);\n"
+"    }\n"
+"  }\n"
+"  /* Store coords for tap-to-annotate */\n"
+"  cv._bv={tMin:tMin,tMax:tMax,pad:pad,w:w,h:h,sess:s};\n"
+"}\n"
+/* Tap on graph → annotate at that timestamp */
+"function bvCanvasTap(ev){\n"
+"  const cv=document.getElementById('bvCanvas');\n"
+"  const info=cv._bv;if(!info)return;\n"
+"  const rect=cv.getBoundingClientRect();\n"
+"  const x=(ev.touches?ev.touches[0]:ev).clientX-rect.left;\n"
+"  if(x<info.pad.l||x>info.w-info.pad.r)return;\n"
+"  const t_ms=info.tMin+(info.tMax-info.tMin)*((x-info.pad.l)/(info.w-info.pad.l-info.pad.r));\n"
+"  openAnnSheet(t_ms);\n"
+"}\n"
+"document.addEventListener('DOMContentLoaded',()=>{\n"
+"  const cv=document.getElementById('bvCanvas');\n"
+"  if(cv){cv.addEventListener('click',bvCanvasTap);cv.addEventListener('touchstart',bvCanvasTap)}\n"
+"});\n"
+/* DOMContentLoaded may have already fired; also attach now */
+"setTimeout(()=>{\n"
+"  const cv=document.getElementById('bvCanvas');\n"
+"  if(cv&&!cv._bound){cv._bound=true;cv.addEventListener('click',bvCanvasTap);cv.addEventListener('touchstart',bvCanvasTap)}\n"
+"},100);\n"
+/* Annotation sheet (drop event at tapped timestamp) */
+"let annTms=0;\n"
+"function openAnnSheet(t_ms){\n"
+"  annTms=t_ms;\n"
+"  document.getElementById('annHdr').textContent='Add event at '+fmtDur(t_ms);\n"
+"  document.getElementById('annEvents').innerHTML=EVENTS.map(ev=>\n"
+"    \"<button onclick=\\\"annPick('\"+ev.id+\"')\\\">\"\n"
+"    +'<span class=ev-icon>'+ev.icon+'</span>'+esc(ev.label)+'</button>'\n"
+"  ).join('');\n"
+"  document.getElementById('annSheet').classList.add('open');\n"
+"}\n"
+"function closeAnn(){document.getElementById('annSheet').classList.remove('open')}\n"
+"function annPick(type){\n"
+"  const s=bvGetSession();if(!s){closeAnn();return}\n"
+"  let noteText=null;\n"
+"  if(type==='note'){noteText=prompt('Note:','');if(!noteText){closeAnn();return}}\n"
+"  const ev={t_ms:Math.max(0,Math.round(annTms)),type:type,at:new Date(s.started_ms+annTms).toISOString()};\n"
+"  if(noteText)ev.note=noteText;\n"
+"  s.events.push(ev);\n"
+"  s.events.sort((a,b)=>a.t_ms-b.t_ms);\n"
+"  if(bvReplayMode)savePS();else saveAS();\n"
+"  closeAnn();bvRender();bvDraw();\n"
+"}\n"
+/* ====== Sessions browser ====== */
+"function openSessions(){renderSessList();document.getElementById('sessModal').classList.add('open')}\n"
+"function closeSessions(){document.getElementById('sessModal').classList.remove('open')}\n"
+"function renderSessList(){\n"
+"  const el=document.getElementById('sessList');\n"
+"  const all=[];\n"
+"  Object.values(activeSessions).forEach(s=>all.push({s:s,active:true}));\n"
+"  [...pastSessions].reverse().forEach(s=>all.push({s:s,active:false}));\n"
+"  if(all.length===0){\n"
+"    el.innerHTML=\"<div style='color:#888;text-align:center;padding:20px'>No sessions yet.</div>\";\n"
+"    return;\n"
+"  }\n"
+"  el.innerHTML=all.slice(0,80).map(o=>{\n"
+"    const s=o.s;const cw=findCw(s.cookware_id);\n"
+"    const dur=s.duration_ms||(Date.now()-s.started_ms);\n"
+"    const date=new Date(s.started).toLocaleString();\n"
+"    const chip=o.active?'<span class=\"sess-chip rec\">REC</span>':'';\n"
+"    return \"<div class=row onclick=\\\"openSessFromList('\"+s.id+\"','\"+(o.active?'a':'p')+\"')\\\">\"\n"
+"      +'<span class=icon>'+esc(cw?cw.icon:'?')+'</span>'\n"
+"      +'<div class=info><div class=name>'+esc(s.label)+chip+'</div>'\n"
+"      +'<div class=sub>'+bName(s.burner_id)+' · '+esc(cw?cw.name:'unknown')+' · '\n"
+"      +fmtDur(dur)+' · '+s.samples.length+' · '+esc(date)+'</div></div>'\n"
+"      +'</div>';\n"
+"  }).join('');\n"
+"}\n"
+"function openSessFromList(id,kind){\n"
+"  closeSessions();\n"
+"  if(kind==='a'){\n"
+"    const s=Object.values(activeSessions).find(x=>x.id===id);\n"
+"    if(s)openBurnerView(s.burner_id);\n"
+"  }else{\n"
+"    const s=pastSessions.find(x=>x.id===id);\n"
+"    if(s)openBurnerView(s.burner_id,s.id);\n"
+"  }\n"
+"}\n"
+/* ====== Export / Import via Share sheet ====== */
+"function exportBackup(){\n"
+"  const data={\n"
+"    version:1,exported_at:new Date().toISOString(),\n"
+"    cookware:cookwareLib,calib_offsets:calibOffsets,\n"
+"    burner_cookware:burnerCookware,\n"
+"    sessions:pastSessions,active_sessions:activeSessions,\n"
+"  };\n"
+"  const json=JSON.stringify(data);\n"
+"  const filename='stoveiq-backup-'+new Date().toISOString().slice(0,10)+'.json';\n"
+"  const blob=new Blob([json],{type:'application/json'});\n"
+"  try{\n"
+"    const f=new File([blob],filename,{type:'application/json'});\n"
+"    if(navigator.canShare&&navigator.canShare({files:[f]})){\n"
+"      navigator.share({files:[f],title:'StoveIQ backup'}).catch(()=>{});\n"
+"      return;\n"
+"    }\n"
+"  }catch(e){}\n"
+"  /* Fallback: download link */\n"
+"  const a=document.createElement('a');\n"
+"  a.href=URL.createObjectURL(blob);a.download=filename;a.click();\n"
+"  setTimeout(()=>URL.revokeObjectURL(a.href),2000);\n"
+"}\n"
+"function importBackup(ev){\n"
+"  const f=ev.target.files[0];if(!f)return;\n"
+"  const reader=new FileReader();\n"
+"  reader.onload=e=>{\n"
+"    try{\n"
+"      const d=JSON.parse(e.target.result);\n"
+"      if(!d||d.version!==1){alert('Not a StoveIQ v1 backup');return}\n"
+"      const replace=!confirm('Merge with existing data?\\n(OK = merge, Cancel = REPLACE ALL)');\n"
+"      if(replace){\n"
+"        cookwareLib=d.cookware||[];\n"
+"        calibOffsets=d.calib_offsets||{};\n"
+"        burnerCookware=d.burner_cookware||{};\n"
+"        pastSessions=d.sessions||[];\n"
+"        activeSessions=d.active_sessions||{};\n"
+"      }else{\n"
+"        (d.cookware||[]).forEach(cw=>{\n"
+"          const i=cookwareLib.findIndex(c=>c.id===cw.id);\n"
+"          if(i>=0)cookwareLib[i]=cw;else cookwareLib.push(cw);\n"
+"        });\n"
+"        Object.assign(calibOffsets,d.calib_offsets||{});\n"
+"        Object.assign(burnerCookware,d.burner_cookware||{});\n"
+"        (d.sessions||[]).forEach(s=>{if(!pastSessions.find(p=>p.id===s.id))pastSessions.push(s)});\n"
+"      }\n"
+"      saveCw();saveCO();saveBC();savePS();saveAS();\n"
+"      renderSessList();renderCards();\n"
+"      alert('Imported: '+(d.cookware?.length||0)+' cookware, '+(d.sessions?.length||0)+' sessions.');\n"
+"    }catch(err){alert('Import failed: '+err.message)}\n"
+"    ev.target.value='';\n"
+"  };\n"
+"  reader.readAsText(f);\n"
+"}\n"
+/* Hook for WS updates — called from ws.onmessage after burners updates */
+"function phase1Hook(burnersArr){\n"
+"  burnersArr.forEach(b=>{if(activeSessions[b.id])recordSample(b.id,b.temp,b.state)});\n"
+"  if(bvOpenBurnerId>=0&&!bvReplayMode)bvRender();\n"
+"}\n"
+/* Re-render on viewport resize (graph) */
+"window.addEventListener('resize',()=>{if(bvOpenBurnerId>=0)bvDraw()});\n"
+/* Screen Wake Lock — keep phone awake while cooking.
+   Two strategies: Wake Lock API (secure-context only), then NoSleep
+   silent-video fallback for iOS Safari over plain HTTP. */
+"let wakeLock=null,wakeReq=false,vidPlaying=false;\n"
+"const wakeDot=document.getElementById('wakeDot');\n"
+"const sleepVid=document.getElementById('sleepVid');\n"
+"function setAwake(on){wakeDot.classList.toggle('awake',on)}\n"
+"async function reqWakeLock(){\n"
+"  if(wakeLock||wakeReq||!('wakeLock' in navigator))return false;\n"
+"  wakeReq=true;\n"
+"  try{\n"
+"    wakeLock=await navigator.wakeLock.request('screen');\n"
+"    wakeLock.addEventListener('release',()=>{wakeLock=null;updateDot()});\n"
+"    wakeReq=false;return true;\n"
+"  }catch(e){wakeReq=false;return false}\n"
+"}\n"
+"async function playSilent(){\n"
+"  if(vidPlaying)return true;\n"
+"  try{await sleepVid.play();vidPlaying=true;return true}\n"
+"  catch(e){return false}\n"
+"}\n"
+"function pauseSilent(){if(vidPlaying){sleepVid.pause();vidPlaying=false}}\n"
+"function updateDot(){setAwake(!!wakeLock||vidPlaying)}\n"
+"async function reqWake(){\n"
+"  const ok=await reqWakeLock();\n"
+"  if(!ok)await playSilent();\n"
+"  updateDot();\n"
+"}\n"
+"document.addEventListener('visibilitychange',()=>{\n"
+"  if(document.visibilityState==='visible')reqWake();\n"
+"});\n"
+"document.addEventListener('click',reqWake);\n"
+"wakeDot.addEventListener('click',async(e)=>{\n"
+"  e.stopPropagation();\n"
+"  if(wakeLock){try{await wakeLock.release()}catch(ex){}}\n"
+"  if(vidPlaying)pauseSilent();\n"
+"  if(!wakeLock&&!vidPlaying)await reqWake();\n"
+"  updateDot();\n"
+"});\n"
+"reqWake();\n"
 /* PWA service worker registration */
 "if('serviceWorker' in navigator){"
 "navigator.serviceWorker.register('/sw.js').catch(()=>{})}\n"
@@ -853,7 +1674,7 @@ static esp_err_t icon_handler(httpd_req_t *req)
 /* ------------------------------------------------------------------ */
 
 static const char SERVICE_WORKER_JS[] =
-    "const CACHE='stoveiq-v1';\n"
+    "const CACHE='stoveiq-v3';\n"
     "const PRECACHE=['/','manifest.json'];\n"
     "self.addEventListener('install',e=>{\n"
     "  e.waitUntil(caches.open(CACHE).then(c=>c.addAll(PRECACHE)));\n"
@@ -881,6 +1702,37 @@ static esp_err_t sw_handler(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Service-Worker-Allowed", "/");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
     httpd_resp_send(req, SERVICE_WORKER_JS, strlen(SERVICE_WORKER_JS));
+    return ESP_OK;
+}
+
+/* HTTP → HTTPS 301 redirect. Preserves path + query. Uses the Host header
+ * so it works whether the user typed stoveiq.local or the IP address. */
+static esp_err_t redirect_to_https_handler(httpd_req_t *req)
+{
+    char host[64] = "stoveiq.local";
+    httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host));
+    /* Strip any :port suffix from Host */
+    char *colon = strchr(host, ':');
+    if (colon) *colon = '\0';
+
+    /* Host is capped at 63, URI at 512 (HTTPD default), plus "https://" = 8. */
+    char location[600];
+    snprintf(location, sizeof(location), "https://%s%s", host, req->uri);
+
+    httpd_resp_set_status(req, "301 Moved Permanently");
+    httpd_resp_set_hdr(req, "Location", location);
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "Redirecting to HTTPS", HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/* Silent looping MP4 for iOS Safari screen-wake fallback (kept for
+ * legacy non-secure access; unused once users migrate to HTTPS). */
+static esp_err_t silent_mp4_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "video/mp4");
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=604800");
+    httpd_resp_send(req, (const char *)SILENT_MP4, SILENT_MP4_LEN);
     return ESP_OK;
 }
 
@@ -1036,14 +1888,19 @@ esp_err_t web_server_init(void)
 
     init_spiffs();
 
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.stack_size = 16384;
-    config.max_uri_handlers = 16;
-    config.max_open_sockets = 7;
+    /* ------- HTTPS server on :443 (main app) ------- */
+    httpd_ssl_config_t conf = HTTPD_SSL_CONFIG_DEFAULT();
+    conf.httpd.stack_size = 16384;
+    conf.httpd.max_uri_handlers = 16;
+    conf.httpd.max_open_sockets = 4;   /* TLS uses ~30KB RAM per socket */
+    conf.servercert     = (const uint8_t *)SERVER_CERT_PEM;
+    conf.servercert_len = sizeof(SERVER_CERT_PEM);
+    conf.prvtkey_pem    = (const uint8_t *)SERVER_KEY_PEM;
+    conf.prvtkey_len    = sizeof(SERVER_KEY_PEM);
 
-    esp_err_t ret = httpd_start(&s_server, &config);
+    esp_err_t ret = httpd_ssl_start(&s_server, &conf);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "HTTP server start failed");
+        ESP_LOGE(TAG, "HTTPS server start failed: %s", esp_err_to_name(ret));
         return ret;
     }
 
@@ -1077,28 +1934,47 @@ esp_err_t web_server_init(void)
                          .handler = icon_handler };
     httpd_uri_t sw = { .uri = "/sw.js", .method = HTTP_GET,
                        .handler = sw_handler };
+    httpd_uri_t silent = { .uri = "/silent.mp4", .method = HTTP_GET,
+                           .handler = silent_mp4_handler };
     httpd_register_uri_handler(s_server, &manifest);
     httpd_register_uri_handler(s_server, &icon);
     httpd_register_uri_handler(s_server, &sw);
+    httpd_register_uri_handler(s_server, &silent);
 
     /* Debug / calibration reset */
     httpd_uri_t clearcal = { .uri = "/api/clear-cal", .method = HTTP_GET,
                              .handler = clear_cal_handler };
     httpd_register_uri_handler(s_server, &clearcal);
 
-    /* Captive portal */
-    httpd_uri_t apple = { .uri = "/hotspot-detect.html", .method = HTTP_GET,
-                          .handler = captive_handler };
-    httpd_uri_t android = { .uri = "/generate_204", .method = HTTP_GET,
-                            .handler = generate_204_handler };
-    httpd_uri_t conn = { .uri = "/connecttest.txt", .method = HTTP_GET,
-                         .handler = captive_handler };
-    httpd_register_uri_handler(s_server, &apple);
-    httpd_register_uri_handler(s_server, &android);
-    httpd_register_uri_handler(s_server, &conn);
+    /* ------- HTTP server on :80 (redirect + captive portal) -------
+       Serves OS captive-portal probes unencrypted (iOS/Android require HTTP),
+       and 301-redirects all other traffic to https://stoveiq.local<path>. */
+    httpd_config_t http_cfg = HTTPD_DEFAULT_CONFIG();
+    http_cfg.server_port = 80;
+    http_cfg.ctrl_port   = 32769;       /* must differ from HTTPS ctrl_port */
+    http_cfg.max_uri_handlers = 8;
+    http_cfg.max_open_sockets = 4;
+    http_cfg.uri_match_fn = httpd_uri_match_wildcard;
 
-    ESP_LOGI(TAG, "HTTP + WebSocket server started on port %d",
-             config.server_port);
+    if (httpd_start(&s_redirect_server, &http_cfg) == ESP_OK) {
+        /* Captive portal probes stay on HTTP so iOS/Android detect them */
+        httpd_uri_t apple80 = { .uri = "/hotspot-detect.html", .method = HTTP_GET,
+                                .handler = captive_handler };
+        httpd_uri_t android80 = { .uri = "/generate_204", .method = HTTP_GET,
+                                  .handler = generate_204_handler };
+        httpd_uri_t conn80 = { .uri = "/connecttest.txt", .method = HTTP_GET,
+                               .handler = captive_handler };
+        httpd_uri_t wildcard = { .uri = "/*", .method = HTTP_GET,
+                                 .handler = redirect_to_https_handler };
+        httpd_register_uri_handler(s_redirect_server, &apple80);
+        httpd_register_uri_handler(s_redirect_server, &android80);
+        httpd_register_uri_handler(s_redirect_server, &conn80);
+        httpd_register_uri_handler(s_redirect_server, &wildcard);
+    } else {
+        ESP_LOGW(TAG, "HTTP redirect server failed to start (HTTPS still works)");
+    }
+
+    ESP_LOGI(TAG, "HTTPS server on :443, HTTP redirect on :80");
     return ESP_OK;
 }
 
